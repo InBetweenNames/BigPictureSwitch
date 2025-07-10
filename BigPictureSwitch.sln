@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36221.1 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BigPictureAudioSwitch2", "BigPictureAudioSwitch2.vcxproj", "{57AB4A15-6056-48E2-91B9-7AE34C13E86F}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "BigPictureSwitch", "BigPictureSwitch.vcxproj", "{57AB4A15-6056-48E2-91B9-7AE34C13E86F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
