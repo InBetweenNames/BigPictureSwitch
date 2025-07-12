@@ -177,7 +177,7 @@ struct DisplayPathEx
     DISPLAYCONFIG_PATH_INFO path;
     std::wstring monitorFriendlyName;
 
-    DisplayPathEx(DISPLAYCONFIG_PATH_INFO& path) : path(path)
+    DisplayPathEx(DISPLAYCONFIG_PATH_INFO& path, bool primary = false) : path(path)
     {
         // Get the target display name
         DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
@@ -190,10 +190,17 @@ struct DisplayPathEx
         {
             this->monitorFriendlyName = targetName.monitorFriendlyDeviceName;
 
+            // Determine the adapter that this target belongs to
+
             // Check the status of the display too
             if (path.targetInfo.statusFlags & DISPLAYCONFIG_PATH_ACTIVE)
             {
                 this->monitorFriendlyName += L" [Active]";
+            }
+
+            if (primary)
+            {
+				this->monitorFriendlyName += L" [Primary]";
             }
 
             DebugLog(L"DisplayPathEx: Friendly name: %s", this->monitorFriendlyName.c_str());
@@ -224,7 +231,6 @@ struct AdapterPair
 
     AdapterPair(DISPLAYCONFIG_PATH_TARGET_INFO& target) : adapterId(target.adapterId), id(target.id)
     {
-        DebugLog(L"AdapterPair created: AdapterId=%08X%08X, Id=%u", adapterId.HighPart, adapterId.LowPart, id);
 	}
 
 
@@ -1339,6 +1345,7 @@ DisplayConfiguration GetCurrentDisplayConfiguration()
 {
     DebugLog(L"GetCurrentDisplayConfiguration: Getting current display configuration");
 
+    // Here, we want to ensure we capture the entire current display configuration, including virtual modes and refresh rates.
     auto ret = QueryDisplayConfiguration(QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
 
     return ret;
@@ -1348,7 +1355,7 @@ DisplayConfiguration GetCurrentDisplayConfiguration()
 std::vector<DisplayPathEx> EnumerateConnectedDisplayConfigurations()
 {
     DebugLog(L"EnumerateConnectedDisplayConfigurations: Getting all connected displays");
-    // Query all display paths and modes
+    // Query all display paths and modes (virtual mode NOT supported, virtual refresh rate IS)
     auto dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
 
 	// Now, use SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED with setting the paths to active to filter all of the display paths for ones that could be activated.
@@ -1369,7 +1376,12 @@ std::vector<DisplayPathEx> EnumerateConnectedDisplayConfigurations()
         {
             DebugLog(L"EnumerateConnectedDisplayConfigurations: Found active display path: (%ld.%u,%u) to (%ld.%u,%u)", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
 			// This path is active, so we can consider it connected
-            connectedPaths.emplace_back(path);
+
+            auto position = dc.modes[path.sourceInfo.modeInfoIdx].sourceMode.position;
+			auto primary = position.x == 0 && position.y == 0;
+
+
+            connectedPaths.emplace_back(path, primary);
 			connectedDisplays.insert(AdapterPair(path.targetInfo)); // Add to the set of connected display paths
             continue;
         }
@@ -1391,7 +1403,7 @@ std::vector<DisplayPathEx> EnumerateConnectedDisplayConfigurations()
         }
         else
         {
-            DebugLog(L"EnumerateConnectedDisplayConfigurations: Path (%ld.%u,%u) to (%ld.%u,%u) cannot be activated, error 0x%08X", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
+            DebugLog(L"EnumerateConnectedDisplayConfigurations: Path (%ld.%u,%u) to (%ld.%u,%u) cannot be activated, error 0x%08X", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id, res);
 		}
  
     }
