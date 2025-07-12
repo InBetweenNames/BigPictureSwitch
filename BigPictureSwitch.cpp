@@ -207,17 +207,13 @@ struct DisplayPathEx
 
 bool operator==(const DisplayPathEx& lhs, const DisplayPathEx& rhs)
 {
+	// Ignore the monitorFriendlyName for comparison
+    static_assert(std::has_unique_object_representations_v<decltype(rhs.path)>, "DISPLAYCONFIG_PATH_INFO has padding bytes");
+    static_assert(std::is_standard_layout_v<decltype(rhs.path)>, "DISPLAYCONFIG_PATH_INFO is not standard layout");
 
-    bool source = lhs.path.sourceInfo.adapterId.HighPart == rhs.path.sourceInfo.adapterId.HighPart
-        && lhs.path.sourceInfo.adapterId.LowPart == rhs.path.sourceInfo.adapterId.LowPart
-        && lhs.path.sourceInfo.id == rhs.path.sourceInfo.id;
+    return memcmp(&lhs.path, &rhs.path, sizeof(rhs.path)) == 0;
 
-
-    bool target = lhs.path.targetInfo.adapterId.HighPart == rhs.path.targetInfo.adapterId.HighPart
-        && lhs.path.targetInfo.adapterId.LowPart == rhs.path.targetInfo.adapterId.LowPart
-        && lhs.path.targetInfo.id == rhs.path.targetInfo.id;
-
-	return source && target;
+  
 }
 
 
@@ -493,7 +489,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
         int wmId = LOWORD(wParam);
 
-        if (wmId >= IDM_AUDIODEVICE_BASE && wmId <= IDM_AUDIODEVICE_MAX)
+        if (wmId >= IDM_AUDIODEVICE_BASE && wmId < IDM_AUDIODEVICE_MAX)
         {
             int deviceIndex = wmId - IDM_AUDIODEVICE_BASE;
             if (deviceIndex >= 0 && deviceIndex < g_audioDevices.size())
@@ -503,7 +499,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             return 0;
         }
-        if (wmId >= IDM_DISPLAYDEVICE_BASE && wmId <= IDM_DISPLAYDEVICE_MAX)
+        if (wmId >= IDM_DISPLAYDEVICE_BASE && wmId < IDM_DISPLAYDEVICE_MAX)
         {
             int deviceIndex = wmId - IDM_DISPLAYDEVICE_BASE;
             if (deviceIndex >= 0 && deviceIndex < g_displayDevices.size())
@@ -632,7 +628,12 @@ void ShowTrayMenu(HWND hWnd)
         for (size_t i = 0; i < g_displayDevices.size(); ++i)
         {
             // Add each display name to the menu
-            AppendMenuW(hMenu, MF_STRING, IDM_DISPLAYDEVICE_BASE + i, g_displayDevices[i].monitorFriendlyName.c_str());
+            UINT flags = MF_STRING;
+            if (g_displayDevices[i] == g_selectedDisplayDevice)
+            {
+                flags |= MF_CHECKED; // Checkmark for the selected display
+			}
+            AppendMenuW(hMenu, flags, IDM_DISPLAYDEVICE_BASE + i, g_displayDevices[i].monitorFriendlyName.c_str());
 		}
 
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -1215,6 +1216,12 @@ BOOL SaveSettingsToRegistry()
 
 	DebugLog(L"SaveSettingsToRegistry: SWITCH_DISPLAY result=%d, g_bSwitchDisplay=%d", (result == ERROR_SUCCESS), g_bSwitchDisplay);
 
+
+    if (g_selectedDisplayDevice)
+    {
+		// Save the selected display device information
+        // Only to save the source adapterId,id and target adapterId,id -- NOT the full path info.
+    }
 
  //   if (g_selectedDisplayDevice)
  //   {
