@@ -15,6 +15,8 @@
 #define IDR_MAINFRAME                   128
 #define IDM_AUDIODEVICE_BASE            32772
 #define IDM_AUDIODEVICE_MAX             32872
+#define IDM_DISPLAYDEVICE_BASE            32872
+#define IDM_DISPLAYDEVICE_MAX             32972
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

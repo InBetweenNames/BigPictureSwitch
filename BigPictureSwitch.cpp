@@ -22,6 +22,9 @@
 #include <sstream>
 #include <processthreadsapi.h>
 
+#include <unordered_map>
+#include <unordered_set>
+
 #include <winuser.h>
 
 
@@ -126,13 +129,6 @@ public:
         );
 };
 
-
-struct AudioDevice
-{
-    std::wstring id;
-    std::wstring name;
-};
-
 // Simple debug logging function
 void DebugLog(const wchar_t* format, ...)
 {
@@ -163,6 +159,100 @@ void DebugLog(const wchar_t* format, ...)
     FatalAppExit(0, buffer); \
 } while(0)
 
+
+struct AudioDevice
+{
+    std::wstring id;
+    std::wstring name;
+};
+
+struct DisplayConfiguration
+{
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+};
+
+struct DisplayPathEx
+{
+    DISPLAYCONFIG_PATH_INFO path;
+    std::wstring monitorFriendlyName;
+
+    DisplayPathEx(DISPLAYCONFIG_PATH_INFO& path) : path(path)
+    {
+        // Get the target display name
+        DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
+        targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        targetName.header.size = sizeof(targetName);
+        targetName.header.adapterId = path.targetInfo.adapterId;
+        targetName.header.id = path.targetInfo.id;
+        LONG res = DisplayConfigGetDeviceInfo(&targetName.header);
+        if (res == ERROR_SUCCESS)
+        {
+            this->monitorFriendlyName = targetName.monitorFriendlyDeviceName;
+
+            // Check the status of the display too
+            if (path.targetInfo.statusFlags & DISPLAYCONFIG_PATH_ACTIVE)
+            {
+                this->monitorFriendlyName += L" [Active]";
+            }
+
+            DebugLog(L"DisplayPathEx: Friendly name: %s", this->monitorFriendlyName.c_str());
+        }
+        else {
+            DebugLog(L"DisplayPathEx: Could not get friendly name of display: %d", res);
+            this->monitorFriendlyName = L"Unknown display";
+        }
+    }
+};
+
+bool operator==(const DisplayPathEx& lhs, const DisplayPathEx& rhs)
+{
+
+    bool source = lhs.path.sourceInfo.adapterId.HighPart == rhs.path.sourceInfo.adapterId.HighPart
+        && lhs.path.sourceInfo.adapterId.LowPart == rhs.path.sourceInfo.adapterId.LowPart
+        && lhs.path.sourceInfo.id == rhs.path.sourceInfo.id;
+
+
+    bool target = lhs.path.targetInfo.adapterId.HighPart == rhs.path.targetInfo.adapterId.HighPart
+        && lhs.path.targetInfo.adapterId.LowPart == rhs.path.targetInfo.adapterId.LowPart
+        && lhs.path.targetInfo.id == rhs.path.targetInfo.id;
+
+	return source && target;
+}
+
+
+struct AdapterPair
+{
+    LUID adapterId;
+    UINT32 id;
+
+    AdapterPair(DISPLAYCONFIG_PATH_TARGET_INFO& target) : adapterId(target.adapterId), id(target.id)
+    {
+        DebugLog(L"AdapterPair created: AdapterId=%08X%08X, Id=%u", adapterId.HighPart, adapterId.LowPart, id);
+	}
+
+
+    bool operator==(const AdapterPair& other) const
+    {
+        return adapterId.LowPart == other.adapterId.LowPart &&
+            adapterId.HighPart == other.adapterId.HighPart &&
+            id == other.id;
+    }
+};
+
+template<>
+struct std::hash<AdapterPair>
+{
+    std::size_t operator()(const AdapterPair& s) const noexcept
+    {
+        std::size_t h1 = std::hash<DWORD>{}(s.adapterId.LowPart);
+        std::size_t h2 = std::hash<LONG>{}(s.adapterId.HighPart);
+        std::size_t h3 = std::hash<UINT32>{}(s.id);
+
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
+
 // Global Variables:
 HINSTANCE hInst;                                // current instance
 WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
@@ -185,7 +275,9 @@ IPolicyConfig* g_pPolicyConfig = nullptr; // Pointer to the PolicyConfig interfa
 // Steam Big Picture Mode detection globals
 HWINEVENTHOOK g_hWinEventHook = nullptr;
 BOOL g_bSteamBigPictureModeRunning = FALSE;
-std::optional<HWND> g_steamBigPictureModeHwnd;
+std::optional<DisplayConfiguration> g_origDisplayConfig;
+std::vector<DisplayPathEx> g_displayDevices;
+std::optional<DisplayPathEx> g_selectedDisplayDevice;
 
 // Forward declarations of functions included in this code module:
 ATOM                RegisterWindow(HINSTANCE hInstance);
@@ -210,6 +302,11 @@ BOOL                SaveSettingsToRegistry();
 BOOL                LoadSettingsFromRegistry();
 void                SetSelectedAudioDevice(LPCWSTR deviceId);
 LPCWSTR             GetSelectedAudioDevice();
+
+std::vector<DisplayPathEx> EnumerateConnectedDisplayConfigurations();
+std::vector<std::wstring> GetDisplayNamesFromPaths(const std::vector<DISPLAYCONFIG_PATH_INFO>& paths);
+DisplayConfiguration GetCurrentDisplayConfiguration();
+void                SetSelectedDisplayDevice(const DisplayPathEx& path);
 
 // TODO:
 // * Enumerate all displays
@@ -406,6 +503,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             }
             return 0;
         }
+        if (wmId >= IDM_DISPLAYDEVICE_BASE && wmId <= IDM_DISPLAYDEVICE_MAX)
+        {
+            int deviceIndex = wmId - IDM_DISPLAYDEVICE_BASE;
+            if (deviceIndex >= 0 && deviceIndex < g_displayDevices.size())
+            {
+                SetSelectedDisplayDevice(g_displayDevices[deviceIndex]);
+                SaveSettingsToRegistry();
+            }
+            return 0;
+        }
 
         // Parse the menu selections:
         switch (wmId)
@@ -502,7 +609,7 @@ void ShowTrayMenu(HWND hWnd)
         // Add audio devices to the menu
         if (!g_audioDevices.empty())
         {
-            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Audio Devices:");
+            AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Switch to Audio Device:");
             for (size_t i = 0; i < g_audioDevices.size(); ++i)
             {
                 UINT deviceFlags = MF_STRING;
@@ -516,6 +623,19 @@ void ShowTrayMenu(HWND hWnd)
             // Add a separator
             AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
         }
+
+
+        // Show all connected displays and their status
+
+		g_displayDevices = EnumerateConnectedDisplayConfigurations();
+        AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Switch to Display Device:");
+        for (size_t i = 0; i < g_displayDevices.size(); ++i)
+        {
+            // Add each display name to the menu
+            AppendMenuW(hMenu, MF_STRING, IDM_DISPLAYDEVICE_BASE + i, g_displayDevices[i].monitorFriendlyName.c_str());
+		}
+
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
         // Add startup option with checkmark if enabled
         UINT startupFlags = MF_STRING;
@@ -830,18 +950,29 @@ BOOL SaveStartupEnabled()
     return (result == ERROR_SUCCESS);
 }
 
-void EnterBigPictureMode()
+void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 {
     if (!g_bSteamBigPictureModeRunning)
     {
         DebugLog(L"Entering Steam Big Picture Mode");
 
-        if (g_bSwitchDisplay)
+        if (g_selectedDisplayDevice)
         {
+            // save old display configuration
+            g_origDisplayConfig = GetCurrentDisplayConfiguration();
+
+			// use the selected display device as a topology with exactly one active display
+            // skip any modesetting.
+
+			DISPLAYCONFIG_PATH_INFO path = g_selectedDisplayDevice->path;
+			path.flags |= DISPLAYCONFIG_PATH_ACTIVE;
+
+            // FIXME: should I also make the current display config inactive?
+
             auto res = SetDisplayConfig(
-                0, nullptr,  // No source mode
+                1, &path,  // only paths
                 0, nullptr,  // No target modes
-                SDC_APPLY | SDC_TOPOLOGY_EXTERNAL
+                SDC_APPLY | SDC_TOPOLOGY_SUPPLIED
 			);
 
             if (res != ERROR_SUCCESS)
@@ -854,18 +985,16 @@ void EnterBigPictureMode()
             }
 
             // testing
-            if (g_steamBigPictureModeHwnd)
-            {
-                // Get the current screen dimensions
-                int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-                int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-                // Force window to resize and reposition
-                SetWindowPos(*g_steamBigPictureModeHwnd, HWND_TOP, 0, 0, screenWidth, screenHeight,
-                    SWP_NOZORDER | SWP_NOACTIVATE);
+            // Get the current screen dimensions
+            int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+            int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-                DebugLog(L"Resized window to: %dx%d", screenWidth, screenHeight);
-            }
+            // Force window to resize and reposition
+            SetWindowPos(steamBigPictureModeHwnd, HWND_TOP, 0, 0, screenWidth, screenHeight,
+                SWP_NOZORDER | SWP_SHOWWINDOW);
+
+            DebugLog(L"Resized window to: %dx%d", screenWidth, screenHeight);
         }
         else
         {
@@ -884,6 +1013,9 @@ void EnterBigPictureMode()
                     g_origAudioDeviceId.c_str(), g_selectedAudioDeviceId->c_str());
             }
         }
+        else {
+            DebugLog(L"EnterBigPictureMode: Audio switching is disabled");
+        }
         
         g_bSteamBigPictureModeRunning = TRUE;
     }
@@ -895,21 +1027,26 @@ void ExitBigPictureMode()
     {
         DebugLog(L"Exiting Steam Big Picture Mode");
 
-        if (g_bSwitchDisplay)
+        if (g_selectedDisplayDevice)
         {
+
+			// restore original display configuration exactly as it was before entering Big Picture Mode
+
+            // TODO: add an option to disable the display?
+
             auto res = SetDisplayConfig(
-                0, nullptr,  // No source mode
-                0, nullptr,  // No target modes
-                SDC_APPLY | SDC_TOPOLOGY_INTERNAL
+                g_origDisplayConfig->paths.size(), g_origDisplayConfig->paths.data(),  
+                g_origDisplayConfig->modes.size(), g_origDisplayConfig->modes.data(),  
+                SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
             );
 
             if (res != ERROR_SUCCESS)
             {
-                PANIC(L"EnterBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
+                PANIC(L"ExitBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
             }
             else
             {
-                DebugLog(L"EnterBigPictureMode: Successfully switched to external display");
+                DebugLog(L"ExitBigPictureMode: Successfully switched to selected display");
             }
         }
         
@@ -924,6 +1061,7 @@ void ExitBigPictureMode()
         // Restore original display configuration (all previously active displays)
 
         g_bSteamBigPictureModeRunning = FALSE;
+        g_origDisplayConfig.reset();
     }
 }
 
@@ -953,10 +1091,9 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, 
     // Check if this is Steam Big Picture Mode
     if (WindowMatches(szClassName, szWindowTitle))
     {
-		g_steamBigPictureModeHwnd = hwnd;
         if (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW)
         {
-            EnterBigPictureMode();
+            EnterBigPictureMode(hwnd);
         }
         else if (event == EVENT_OBJECT_DESTROY || event == EVENT_OBJECT_HIDE)
         {
@@ -993,13 +1130,6 @@ BOOL InitializeWindowEventHook()
         WINEVENT_OUTOFCONTEXT      // dwFlags
     );
 
-    // Check if Steam Big Picture Mode is already running
-    HWND hWnd = FindWindowW(L"SDL_app", L"Steam Big Picture Mode");
-    if (hWnd != NULL && IsWindowVisible(hWnd))
-    {
-        g_bSteamBigPictureModeRunning = TRUE;
-    }
-
     DebugLog(L"InitializeWindowEventHook: g_hWinEventHook=0x%p", g_hWinEventHook);
     return TRUE;
 }
@@ -1028,6 +1158,27 @@ void SetSelectedAudioDevice(LPCWSTR deviceId)
             g_selectedAudioDeviceId = deviceId;
         }
     }
+}
+
+void SetSelectedDisplayDevice(const DisplayPathEx& path)
+{
+
+    /*AdapterPair selectedTarget = AdapterPair(device.path.targetInfo);
+
+	DebugLog(L"SetSelectedDisplayDevice: value='%s' (%ld.%u,%u)", device.monitorFriendlyName.c_str(), selectedTarget.adapterId.HighPart, selectedTarget.adapterId.LowPart, selectedTarget.id);*/
+
+    if (g_selectedDisplayDevice && path == *g_selectedDisplayDevice)
+    {
+		DebugLog(L"SetSelectedDisplayDevice: Display device already selected, unsetting");
+        g_selectedDisplayDevice.reset();
+    }
+    else {
+		DebugLog(L"SetSelectedDisplayDevice: Setting selected display device to '%s'", path.monitorFriendlyName.c_str());
+
+        g_selectedDisplayDevice = path;
+    }
+
+
 }
 
 
@@ -1063,6 +1214,20 @@ BOOL SaveSettingsToRegistry()
 	result = RegSetValueExW(hKey, SWITCH_DISPLAY_VALUE_NAME, 0, REG_DWORD, (BYTE*)(&switchDisplay), sizeof(DWORD));
 
 	DebugLog(L"SaveSettingsToRegistry: SWITCH_DISPLAY result=%d, g_bSwitchDisplay=%d", (result == ERROR_SUCCESS), g_bSwitchDisplay);
+
+
+ //   if (g_selectedDisplayDevice)
+ //   {
+ //       // Save the selected display device information
+ //       // FIXME
+ //       size_t dwSize = g_selectedDisplayDevice->monitorFriendlyName.size() * sizeof(WCHAR);
+ //       result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_NAME, 0, REG_SZ, (const BYTE*)g_selectedDisplayDevice->monitorFriendlyName.c_str(), (DWORD)dwSize);
+ //       DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_NAME result=%d, g_selectedDisplayDevice='%s'", (result == ERROR_SUCCESS), g_selectedDisplayDevice->monitorFriendlyName.c_str());
+ //   }
+ //   else {
+ //       result = RegDeleteValueW(hKey, SELECTED_DISPLAY_DEVICE_NAME);
+ //       DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW for SELECTED_DISPLAY_DEVICE_NAME result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
+	//}
 
     RegCloseKey(hKey);
 
@@ -1123,3 +1288,152 @@ LPCWSTR GetSelectedAudioDevice()
     return g_selectedAudioDeviceId.has_value() ? g_selectedAudioDeviceId->c_str() : nullptr;
 }
 
+DisplayConfiguration QueryDisplayConfiguration(const UINT32 flags, DISPLAYCONFIG_TOPOLOGY_ID* currentTopology)
+{
+    LONG result = ERROR_SUCCESS;
+
+	DisplayConfiguration displayConfig;
+
+    do
+    {
+        // Determine how many path and mode structures to allocate
+        UINT32 pathCount, modeCount;
+        result = GetDisplayConfigBufferSizes(flags, &pathCount, &modeCount);
+
+        if (result != ERROR_SUCCESS)
+        {
+			PANIC(L"QueryActiveDisplayConfiguration: GetDisplayConfigBufferSizes failed with error 0x%08X", result);
+        }
+
+        // Allocate the path and mode arrays
+        displayConfig.paths.resize(pathCount);
+        displayConfig.modes.resize(modeCount);
+
+        // Get all active paths and their modes
+        result = QueryDisplayConfig(flags, &pathCount, displayConfig.paths.data(), &modeCount, displayConfig.modes.data(), currentTopology);
+
+        // The function may have returned fewer paths/modes than estimated
+        displayConfig.paths.resize(pathCount);
+        displayConfig.modes.resize(modeCount);
+
+        // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
+        // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
+    } while (result == ERROR_INSUFFICIENT_BUFFER);
+
+    if (result != ERROR_SUCCESS)
+    {
+		PANIC(L"QueryActiveDisplayConfiguration: QueryDisplayConfig failed with error 0x%08X", result);
+    }
+
+	return displayConfig;
+}
+
+DisplayConfiguration GetCurrentDisplayConfiguration()
+{
+    DebugLog(L"GetCurrentDisplayConfiguration: Getting current display configuration");
+
+    auto ret = QueryDisplayConfiguration(QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
+
+    return ret;
+
+}
+
+std::vector<DisplayPathEx> EnumerateConnectedDisplayConfigurations()
+{
+    DebugLog(L"EnumerateConnectedDisplayConfigurations: Getting all connected displays");
+    // Query all display paths and modes
+    auto dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
+
+	// Now, use SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED with setting the paths to active to filter all of the display paths for ones that could be activated.
+
+	std::vector<DisplayPathEx> connectedPaths;
+	std::unordered_set<AdapterPair> connectedDisplays;
+
+    for (auto& path : dc.paths)
+    {
+        if (connectedDisplays.contains(AdapterPair{ path.targetInfo }))
+        {
+            DebugLog(L"EnumerateConnectedDisplayConfigurations: Skipping already processed target: (%ld.%u,%u)", path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
+            continue; // Skip if we've already processed this source
+		}
+
+        // Check if the path is active
+        if (path.flags & DISPLAYCONFIG_PATH_ACTIVE)
+        {
+            DebugLog(L"EnumerateConnectedDisplayConfigurations: Found active display path: (%ld.%u,%u) to (%ld.%u,%u)", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
+			// This path is active, so we can consider it connected
+            connectedPaths.emplace_back(path);
+			connectedDisplays.insert(AdapterPair(path.targetInfo)); // Add to the set of connected display paths
+            continue;
+        }
+
+
+        // Test if it could be activated.
+
+		DISPLAYCONFIG_PATH_INFO testPath = path;
+		testPath.flags |= DISPLAYCONFIG_PATH_ACTIVE; // Set the active flag to test if it can be activated
+
+		// Use SDC_VALIDATE to check if this path can be activated
+		LONG res = SetDisplayConfig(1, &testPath, 0, nullptr, SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE);
+
+        if (res == ERROR_SUCCESS)
+        {
+            DebugLog(L"EnumerateConnectedDisplayConfigurations: Path (%ld.%u,%u) to (%ld.%u,%u) can be activated - adding to path list", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
+            connectedPaths.emplace_back(path); // Add it to the connected paths
+			connectedDisplays.insert(AdapterPair(path.targetInfo)); // Add to the set of connected display paths
+        }
+        else
+        {
+            DebugLog(L"EnumerateConnectedDisplayConfigurations: Path (%ld.%u,%u) to (%ld.%u,%u) cannot be activated, error 0x%08X", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
+		}
+ 
+    }
+
+    for (const auto& path : connectedPaths)
+    {
+        DebugLog(L"EnumerateConnectedDisplayConfigurations: Connected display path: (%ld.%u,%u) to (%ld.%u,%u)", path.path.sourceInfo.adapterId.HighPart, path.path.sourceInfo.adapterId.LowPart, path.path.sourceInfo.id, path.path.targetInfo.adapterId.HighPart, path.path.targetInfo.adapterId.LowPart, path.path.targetInfo.id);
+	}
+
+    for (const auto& path : connectedDisplays)
+    {
+        DebugLog(L"EnumerateConnectedDisplayConfigurations: Connected display: (%ld.%u,%u)", path.adapterId.HighPart, path.adapterId.LowPart, path.id);
+	}
+
+	return connectedPaths;
+}
+
+
+std::vector<std::wstring> GetDisplayNamesFromPaths(const std::vector<DISPLAYCONFIG_PATH_INFO>& paths)
+{
+
+    std::vector<std::wstring> displayNames;
+
+    for (const auto& path : paths)
+    {
+
+        // Get the target display name
+        DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
+        targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        targetName.header.size = sizeof(targetName);
+        targetName.header.adapterId = path.targetInfo.adapterId;
+        targetName.header.id = path.targetInfo.id;
+        LONG res = DisplayConfigGetDeviceInfo(&targetName.header);
+        if (res == ERROR_SUCCESS)
+        {
+            displayNames.push_back(targetName.monitorFriendlyDeviceName);
+
+            // Check the status of the display too
+            if (path.targetInfo.statusFlags & DISPLAYCONFIG_PATH_ACTIVE)
+            {
+                displayNames.back() += L" [Active]";
+            }
+
+            DebugLog(L"GetConnectedDisplayNames: Found display: %s", displayNames.back().c_str());
+        }
+        else {
+            DebugLog(L"GetConnectedDisplayNames: Could not enumerate display: %d", res);
+        }
+        
+    }
+    return displayNames;
+}
