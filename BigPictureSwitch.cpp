@@ -4,39 +4,21 @@
  /* Exclude redundant APIs such as Cryptography, DDE, RPC, Shell, and Windows Sockets. */
 #define WIN32_LEAN_AND_MEAN
 
-#include <windows.h>
-
 #include "framework.h"
 #include "BigPictureSwitch.h"
-#include <shellapi.h>
-#include <mmdeviceapi.h>
-#include <endpointvolume.h>
-#include <functiondiscoverykeys_devpkey.h>
-#include <comdef.h>
-#include <vector>
-#include <string>
-#include <propsys.h>
-#include <initguid.h>
-#include <mmreg.h>
-#include <shlwapi.h>
-#include <debugapi.h>
-#include <iostream>
-#include <sstream>
-#include <processthreadsapi.h>
-#include <algorithm>
+
 
 #include <unordered_map>
 #include <unordered_set>
-
-#include <winuser.h>
-#include <setupapi.h>
-#include <devpkey.h>          // For DEVPKEY_Device_FriendlyName
-#include <initguid.h>
-#include <devguid.h>          // For GUID_DEVCLASS_DISPLAY
-#include <cfgmgr32.h>         // For CM_Get_Device_IDW
-
 #include <optional>
 #include <format>
+#include <iostream>
+#include <sstream>
+#include <algorithm>
+#include <vector>
+#include <string>
+
+
 
 #define MAX_LOADSTRING 100
 #define WM_TRAYICON (WM_USER + 1)
