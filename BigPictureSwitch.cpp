@@ -436,13 +436,6 @@ std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
     return friendly;
 }
 
-// TODO:
-// * Enumerate all displays
-// * Allow user to select a display for Big Picture Mode
-// * Save current active topology (+ selected display as inactive)
-// * Set new toplgy for Big Picture Mode (all displays inactive EXCEPT selected display, which is active)
-// * Restore topology on exit
-
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
     _In_ LPWSTR    lpCmdLine,
@@ -1452,7 +1445,6 @@ BOOL LoadSettingsFromRegistry()
         monitorFriendlyName = value;
         DebugLog(L"LoadSettingsFromRegistry: Loaded monitor friendly name '%s'", value);
 
-        // TODO: Verify that the display target is still valid
     }
 
 
@@ -1463,7 +1455,6 @@ BOOL LoadSettingsFromRegistry()
         monitorDevicePath = value;
         DebugLog(L"LoadSettingsFromRegistry: Loaded monitor path '%s'", value);
 
-        // TODO: Verify that the display target is still valid
     }
 
     dwSize = sizeof(value);
@@ -1473,7 +1464,6 @@ BOOL LoadSettingsFromRegistry()
         adapterDevicePath = value;
         DebugLog(L"LoadSettingsFromRegistry: Loaded adapter path '%s'", value);
 
-        // TODO: Verify that the display target is still valid
     }
 
     dwSize = sizeof(value);
