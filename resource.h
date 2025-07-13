@@ -17,6 +17,7 @@
 #define IDM_AUDIODEVICE_MAX             32872
 #define IDM_DISPLAYDEVICE_BASE            32872
 #define IDM_DISPLAYDEVICE_MAX             32972
+#define IDM_DISPLAYDEVICE_DISCONNECTED  33000
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

@@ -36,18 +36,23 @@
 #include <cfgmgr32.h>         // For CM_Get_Device_IDW
 
 #include <optional>
+#include <format>
 
 #define MAX_LOADSTRING 100
 #define WM_TRAYICON (WM_USER + 1)
 
 // Registry target for Windows startup
 #define STARTUP_REGISTRY_PATH L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
-#define APP_REGISTRY_NAME L"BigPictureAudioSwitch2"
+#define APP_REGISTRY_NAME L"BigPictureSwitch"
 
 // Registry target for application settings
-#define SETTINGS_REGISTRY_PATH L"SOFTWARE\\BigPictureAudioSwitch2"
+#define SETTINGS_REGISTRY_PATH L"SOFTWARE\\BigPictureSwitch"
 #define SELECTED_DEVICE_VALUE_NAME L"SelectedAudioDevice"
-#define SWITCH_DISPLAY_VALUE_NAME L"SwitchDisplay"
+#define SELECTED_DISPLAY_DEVICE_TARGET L"SelectedDisplayDeviceTarget"
+#define SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_FRIENDLY_NAME L"SelectedDisplayDeviceTargetMonitorFriendlyName"
+#define SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_PATH L"SelectedDisplayDeviceTargetMonitorPath"
+#define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME L"SelectedDisplayDeviceTargetAdapterFriendlyName"
+#define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH L"SelectedDisplayDeviceTargetAdapterPath"
 
 // Undocumented interface for setting default audio device
 interface DECLSPEC_UUID("f8679f50-850a-41cf-9c72-430f290290c8") IPolicyConfig;
@@ -186,6 +191,8 @@ struct AdapterPair
     LUID adapterId;
     UINT32 id;
 
+    AdapterPair() = default;
+
     AdapterPair(const DISPLAYCONFIG_PATH_TARGET_INFO& target) : adapterId(target.adapterId), id(target.id)
     {
     }
@@ -211,22 +218,90 @@ struct std::hash<AdapterPair>
     }
 };
 
+enum struct DisplayTargetExStatus
+{
+    Inactive,
+    Active,
+    Primary,
+    NotPresent
+};;
+
+template<>
+struct std::formatter<DisplayTargetExStatus, wchar_t> {
+    // Parse format specifiers (we ignore any here).
+    constexpr auto parse(wformat_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const DisplayTargetExStatus& p, FormatContext& ctx) const {
+        // ctx.out() is an iterator to the output buffer
+
+        switch (p)
+        {
+            default:
+            case DisplayTargetExStatus::Inactive:
+                return std::format_to(
+                    ctx.out(),
+                    L""
+                );
+            case DisplayTargetExStatus::Active:
+                return std::format_to(
+                    ctx.out(),
+                    L"[Active]"
+                );
+            case DisplayTargetExStatus::Primary:
+                return std::format_to(
+                    ctx.out(),
+                    L"[Primary]"
+                );
+            case DisplayTargetExStatus::NotPresent:
+                return std::format_to(
+                    ctx.out(),
+                    L"[Not Present]"
+                );
+        }
+
+    }
+};
 
 struct DisplayTargetEx
 {
     AdapterPair id;
     std::wstring monitorFriendlyName;
+    std::wstring adapterFriendlyName;
 
-    DisplayTargetEx(const AdapterPair& adapterPair, const std::wstring& friendlyName)
-        : id(adapterPair), monitorFriendlyName(friendlyName)
-    {
-	}
+    // Used for comparison
+    std::wstring monitorDevicePath;
+	std::wstring adapterDevicePath;
+
+};
+
+template<>
+struct std::formatter<DisplayTargetEx, wchar_t> {
+    // Parse format specifiers (we ignore any here).
+    constexpr auto parse(wformat_parse_context& ctx) {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const DisplayTargetEx& p, FormatContext& ctx) const {
+        // ctx.out() is an iterator to the output buffer
+        return std::format_to(
+            ctx.out(),
+            L"{} ({})", 
+			p.monitorFriendlyName.empty() ? L"Unknown Display" : p.monitorFriendlyName,
+			p.adapterFriendlyName.empty() ? L"Unknown Adapter" : p.adapterFriendlyName
+        );
+    }
 };
 
 bool operator==(const DisplayTargetEx& lhs, const DisplayTargetEx& rhs)
 {
-	// We don't care about comparing monitorFriendlyName for equality
-    return lhs.id == rhs.id;
+	// We don't care about comparing status.  We do care about expected names as this is a sign the configuration has changed.
+    return lhs.id == rhs.id
+        && rhs.monitorDevicePath == lhs.monitorDevicePath
+        && lhs.adapterDevicePath == rhs.adapterDevicePath;
 }
 
 
@@ -256,10 +331,10 @@ LPCWSTR             GetSelectedAudioDevice();
 
 std::vector<std::wstring> GetDisplayNamesFromPaths(const std::vector<DISPLAYCONFIG_PATH_INFO>& paths);
 void                SetSelectedDisplayDevice(const DisplayTargetEx& path);
-std::optional<std::wstring> GetFriendlyNameForMonitor(const DISPLAYCONFIG_PATH_INFO& path, bool primary);
-std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const AdapterPair& target, DisplayConfiguration& dc);
+std::optional<DisplayTargetEx> GetDisplayTargetExForPath(const DISPLAYCONFIG_PATH_INFO& path);
+std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const DisplayTargetEx& target, DisplayConfiguration& dc);
 DisplayConfiguration GetCurrentDisplayConfiguration();
-std::vector<DisplayTargetEx> EnumerateConnectedDisplayTargets();
+std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> EnumerateConnectedDisplayTargets();
 DisplayConfiguration QueryDisplayConfiguration(const UINT32 flags, DISPLAYCONFIG_TOPOLOGY_ID* currentTopology);
 
 
@@ -272,7 +347,6 @@ HWND g_hWnd = nullptr;                          // Hidden window handle
 
 // Audio-related globals
 IMMDeviceEnumerator* g_pEnumerator = nullptr;
-bool g_bSwitchDisplay = false; // Flag to indicate if display switching is enabled
 bool g_bStartupEnabled = false; // Flag to indicate if the application is set to run at startup
 std::vector<AudioDevice> g_audioDevices; // Store enumerated audio devices
 std::optional<std::wstring> g_selectedAudioDeviceId = {}; // Store the user's selected audio device
@@ -286,7 +360,7 @@ IPolicyConfig* g_pPolicyConfig = nullptr; // Pointer to the PolicyConfig interfa
 HWINEVENTHOOK g_hWinEventHook = nullptr;
 BOOL g_bSteamBigPictureModeRunning = FALSE;
 std::optional<DisplayConfiguration> g_origDisplayConfig;
-std::vector<DisplayTargetEx> g_displayTargets;
+std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> g_displayTargets;
 std::optional<DisplayTargetEx> g_selectedDisplayTarget;
 
 
@@ -302,7 +376,8 @@ std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
     if (devs == INVALID_HANDLE_VALUE)
         return L"";
 
-    SP_DEVINFO_DATA devInfo = { sizeof(devInfo) };
+    SP_DEVINFO_DATA devInfo = {};
+	devInfo.cbSize = sizeof(SP_DEVINFO_DATA);
     DWORD idx = 0;
     std::wstring friendly;
 
@@ -544,11 +619,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
     case WM_COMMAND:
     {
-        int wmId = LOWORD(wParam);
+        auto wmId = LOWORD(wParam);
 
         if (wmId >= IDM_AUDIODEVICE_BASE && wmId < IDM_AUDIODEVICE_MAX)
         {
-            int deviceIndex = wmId - IDM_AUDIODEVICE_BASE;
+            size_t deviceIndex = wmId - IDM_AUDIODEVICE_BASE;
             if (deviceIndex >= 0 && deviceIndex < g_audioDevices.size())
             {
                 SetSelectedAudioDevice(g_audioDevices[deviceIndex].id.c_str());
@@ -558,14 +633,20 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         }
         if (wmId >= IDM_DISPLAYDEVICE_BASE && wmId < IDM_DISPLAYDEVICE_MAX)
         {
-            int deviceIndex = wmId - IDM_DISPLAYDEVICE_BASE;
+            size_t deviceIndex = wmId - IDM_DISPLAYDEVICE_BASE;
             if (deviceIndex >= 0 && deviceIndex < g_displayTargets.size())
             {
-                SetSelectedDisplayDevice(g_displayTargets[deviceIndex]);
+                SetSelectedDisplayDevice(g_displayTargets[deviceIndex].first);
                 SaveSettingsToRegistry();
             }
             return 0;
         }
+        if (wmId == IDM_DISPLAYDEVICE_DISCONNECTED)
+        {
+			// Handle the disconnected display target case -- simply remove the selected display target
+			g_selectedDisplayTarget.reset();
+            return 0;
+		}
 
         // Parse the menu selections:
         switch (wmId)
@@ -579,10 +660,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDM_EXIT:
             RemoveTrayIcon();
             PostQuitMessage(0);
-            break;
-        case IDM_SWITCH_DISPLAY:
-			g_bSwitchDisplay = !g_bSwitchDisplay;
-            SaveSettingsToRegistry();
             break;
         default:
             return DefWindowProc(hWnd, message, wParam, lParam);
@@ -682,15 +759,23 @@ void ShowTrayMenu(HWND hWnd)
 
 		g_displayTargets = EnumerateConnectedDisplayTargets();
         AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Switch to Display Target:");
+        bool found = false;
         for (size_t i = 0; i < g_displayTargets.size(); ++i)
         {
             // Add each display name to the menu
             UINT flags = MF_STRING;
-            if (g_displayTargets[i] == g_selectedDisplayTarget)
+            if (g_displayTargets[i].first == g_selectedDisplayTarget)
             {
                 flags |= MF_CHECKED; // Checkmark for the selected display
+                found = true;
 			}
-            AppendMenuW(hMenu, flags, IDM_DISPLAYDEVICE_BASE + i, g_displayTargets[i].monitorFriendlyName.c_str());
+            AppendMenuW(hMenu, flags, IDM_DISPLAYDEVICE_BASE + i, std::format(L"{} {}", g_displayTargets[i].first, g_displayTargets[i].second).c_str());
+		}
+
+        // SPECIAL CASE: Display target is selected, but is invalid (e.g. monitor disconnected)
+        if (!found && g_selectedDisplayTarget.has_value())
+        {
+            AppendMenuW(hMenu, MF_STRING | MF_CHECKED, IDM_DISPLAYDEVICE_DISCONNECTED, std::format(L"{} {}", *g_selectedDisplayTarget, DisplayTargetExStatus::NotPresent).c_str());
 		}
 
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -702,16 +787,6 @@ void ShowTrayMenu(HWND hWnd)
             startupFlags |= MF_CHECKED;
         }
         AppendMenuW(hMenu, startupFlags, IDM_STARTUP, L"Run on Startup");
-
-		AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        // Add an option to enable switching to the external display
-
-		UINT switchDisplayFlags = MF_STRING;
-        if (g_bSwitchDisplay)
-        {
-            switchDisplayFlags |= MF_CHECKED;
-		}
-		AppendMenuW(hMenu, switchDisplayFlags, IDM_SWITCH_DISPLAY, L"Switch to External Display");
 
         // Add another separator and the exit option
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -1022,7 +1097,7 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 
             DisplayConfiguration dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
 
-            if (auto pathToTarget = FindPathToDisplay(g_selectedDisplayTarget->id, dc)) {
+            if (auto pathToTarget = FindPathToDisplay(*g_selectedDisplayTarget, dc)) {
 
                 // save old display configuration
                 g_origDisplayConfig = GetCurrentDisplayConfiguration();
@@ -1030,7 +1105,7 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
                 // use the selected display device as a topology with exactly one active display
                 auto res = SetDisplayConfig(
                     1, &*pathToTarget,  // only paths
-                    dc.modes.size(), dc.modes.data(),
+                    static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
                     //SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE
                     SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
                 );
@@ -1098,8 +1173,8 @@ void ExitBigPictureMode()
 			// restore original display configuration exactly as it was before entering Big Picture Mode
 
             auto res = SetDisplayConfig(
-                g_origDisplayConfig->paths.size(), g_origDisplayConfig->paths.data(),  
-                g_origDisplayConfig->modes.size(), g_origDisplayConfig->modes.data(),  
+                static_cast<UINT32>(g_origDisplayConfig->paths.size()), g_origDisplayConfig->paths.data(),
+                static_cast<UINT32>(g_origDisplayConfig->modes.size()), g_origDisplayConfig->modes.data(),
                 SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
             );
 
@@ -1261,7 +1336,7 @@ BOOL SaveSettingsToRegistry()
     if (g_selectedAudioDeviceId)
     {
 
-        size_t dwSize = g_selectedAudioDeviceId->size() * sizeof(WCHAR);
+        size_t dwSize = (g_selectedAudioDeviceId->size() + 1) * sizeof(WCHAR);
         result = RegSetValueExW(hKey, SELECTED_DEVICE_VALUE_NAME, 0, REG_SZ, (const BYTE*)g_selectedAudioDeviceId->c_str(), (DWORD)dwSize);
 
         DebugLog(L"SaveSettingsToRegistry: SELECTED_DEVICE result=%d, g_selectedAudioDeviceId='%s'", (result == ERROR_SUCCESS), g_selectedAudioDeviceId->c_str());
@@ -1272,31 +1347,48 @@ BOOL SaveSettingsToRegistry()
         DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
     }
 
-	DWORD switchDisplay = g_bSwitchDisplay ? 1 : 0;
-
-	result = RegSetValueExW(hKey, SWITCH_DISPLAY_VALUE_NAME, 0, REG_DWORD, (BYTE*)(&switchDisplay), sizeof(DWORD));
-
-	DebugLog(L"SaveSettingsToRegistry: SWITCH_DISPLAY result=%d, g_bSwitchDisplay=%d", (result == ERROR_SUCCESS), g_bSwitchDisplay);
-
 
     if (g_selectedDisplayTarget)
     {
-		// Save the selected display device information
-        // Only to save the source adapterId,id and target adapterId,id -- NOT the full target info.
-    }
+		// Save the selected display target information.
+		// ONLY save the g_selectedDisplayTarget->id.  Do it as REG_DWORD or REG_QWORD values.
 
- //   if (g_selectedDisplayTarget)
- //   {
- //       // Save the selected display device information
- //       // FIXME
- //       size_t dwSize = g_selectedDisplayTarget->monitorFriendlyName.size() * sizeof(WCHAR);
- //       result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_NAME, 0, REG_SZ, (const BYTE*)g_selectedDisplayTarget->monitorFriendlyName.c_str(), (DWORD)dwSize);
- //       DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_NAME result=%d, g_selectedDisplayTarget='%s'", (result == ERROR_SUCCESS), g_selectedDisplayTarget->monitorFriendlyName.c_str());
- //   }
- //   else {
- //       result = RegDeleteValueW(hKey, SELECTED_DISPLAY_DEVICE_NAME);
- //       DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW for SELECTED_DISPLAY_DEVICE_NAME result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
-	//}
+		static_assert(std::has_unique_object_representations_v<decltype(g_selectedDisplayTarget->id)>, "AdapterPair must have unique object representations for registry storage");
+        static_assert(std::is_standard_layout_v<decltype(g_selectedDisplayTarget->id)>, "AdapterPair must be standard layout for registry storage");
+
+        result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET, 0, REG_BINARY,
+			(const BYTE*)&g_selectedDisplayTarget->id, sizeof(g_selectedDisplayTarget->id));
+		DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_TARGET result=%d", (result == ERROR_SUCCESS));
+
+		DWORD dwSize = static_cast<DWORD>((g_selectedDisplayTarget->monitorFriendlyName.size() + 1) * sizeof(WCHAR));
+
+        result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_FRIENDLY_NAME, 0, REG_SZ,
+            (const BYTE*)g_selectedDisplayTarget->monitorFriendlyName.c_str(), dwSize);
+        DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_FRIENDLY_NAME result=%d", (result == ERROR_SUCCESS));
+
+        dwSize = static_cast<DWORD>((g_selectedDisplayTarget->monitorDevicePath.size() + 1) * sizeof(WCHAR));
+
+        result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_PATH, 0, REG_SZ,
+            (const BYTE*)g_selectedDisplayTarget->monitorDevicePath.c_str(), dwSize);
+        DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_PATH result=%d", (result == ERROR_SUCCESS));
+
+        dwSize = static_cast<DWORD>((g_selectedDisplayTarget->adapterFriendlyName.size() + 1) * sizeof(WCHAR));
+
+        result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME, 0, REG_SZ,
+            (const BYTE*)g_selectedDisplayTarget->adapterFriendlyName.c_str(), dwSize);
+        DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME result=%d", (result == ERROR_SUCCESS));
+
+        dwSize = static_cast<DWORD>((g_selectedDisplayTarget->adapterDevicePath.size() + 1) * sizeof(WCHAR));
+
+        result = RegSetValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH, 0, REG_SZ,
+            (const BYTE*)g_selectedDisplayTarget->adapterDevicePath.c_str(), dwSize);
+        DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH result=%d", (result == ERROR_SUCCESS));
+
+    }
+	else {
+        result = RegDeleteValueW(hKey, SELECTED_DISPLAY_DEVICE_TARGET);
+        DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
+    }
 
     RegCloseKey(hKey);
 
@@ -1326,23 +1418,100 @@ BOOL LoadSettingsFromRegistry()
         DebugLog(L"LoadSettingsFromRegistry: result=%d, g_selectedAudioDeviceId='%s'", (result == ERROR_SUCCESS), g_selectedAudioDeviceId->c_str());
     }
 
-    dwType = REG_DWORD;
-    dwSize = sizeof(DWORD);
 
-	DWORD switchDisplay = 0; // Default to false
 
-	result = RegQueryValueExW(hKey, SWITCH_DISPLAY_VALUE_NAME, NULL, &dwType, (BYTE*)&switchDisplay, &dwSize);
-    if (result == ERROR_SUCCESS)
+    // Load the selected display target from the registry
+    std::optional<AdapterPair> selectedDisplayTarget;
+    std::optional<std::wstring> monitorFriendlyName;
+    std::optional<std::wstring> monitorDevicePath;
+    std::optional<std::wstring> adapterFriendlyName;
+    std::optional<std::wstring> adapterDevicePath;
+
+
+
+    static_assert(std::has_unique_object_representations_v<decltype(g_selectedDisplayTarget->id)>, "AdapterPair must have unique object representations for registry storage");
+    static_assert(std::is_standard_layout_v<decltype(g_selectedDisplayTarget->id)>, "AdapterPair must be standard layout for registry storage");
+
+	char buf[sizeof(AdapterPair)];
+
+    dwSize = sizeof(AdapterPair);
+
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET, NULL, &dwType, (BYTE*)&buf, &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_BINARY && dwSize == sizeof(AdapterPair))
     {
-		g_bSwitchDisplay = (switchDisplay != 0);
-		DebugLog(L"LoadSettingsFromRegistry: result=%d, g_bSwitchDisplay=%d", result, g_bSwitchDisplay);
+        selectedDisplayTarget = AdapterPair();
+        memcpy(&selectedDisplayTarget, &buf, sizeof(AdapterPair));
+    }
+
+
+    // Now load the friendly name for the display target
+    dwSize = sizeof(value);
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_FRIENDLY_NAME, NULL, &dwType, (BYTE*)value, &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_SZ)
+    {
+        monitorFriendlyName = value;
+        DebugLog(L"LoadSettingsFromRegistry: Loaded monitor friendly name '%s'", value);
+
+        // TODO: Verify that the display target is still valid
+    }
+
+
+    dwSize = sizeof(value);
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_PATH, NULL, &dwType, (BYTE*)value, &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_SZ)
+    {
+        monitorDevicePath = value;
+        DebugLog(L"LoadSettingsFromRegistry: Loaded monitor path '%s'", value);
+
+        // TODO: Verify that the display target is still valid
+    }
+
+    dwSize = sizeof(value);
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH, NULL, &dwType, (BYTE*)value, &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_SZ)
+    {
+        adapterDevicePath = value;
+        DebugLog(L"LoadSettingsFromRegistry: Loaded adapter path '%s'", value);
+
+        // TODO: Verify that the display target is still valid
+    }
+
+    dwSize = sizeof(value);
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME, NULL, &dwType, (BYTE*)value, &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_SZ)
+    {
+        adapterFriendlyName = value;
+        DebugLog(L"LoadSettingsFromRegistry: Loaded adapter friendly name '%s'", value);
+
+    }
+
+    if (selectedDisplayTarget && monitorFriendlyName && adapterFriendlyName && monitorDevicePath && adapterDevicePath)
+    {
+		DebugLog(L"LoadSettingsFromRegistry: Successfully loaded display target information");
+
+        // Create the DisplayTargetEx object
+        g_selectedDisplayTarget = DisplayTargetEx(
+            *selectedDisplayTarget,
+            *monitorFriendlyName,
+            *adapterFriendlyName,
+            *monitorDevicePath,
+            *adapterDevicePath);
     }
     else {
-		g_bSwitchDisplay = false; // Default to false if not set
-		DebugLog(L"LoadSettingsFromRegistry: result=%d, g_bSwitchDisplay not found, defaulting to FALSE", result);
+		DebugLog(L"Missing display target information in registry, resetting g_selectedDisplayTarget");
+
+        g_selectedDisplayTarget.reset();
     }
 
-    // TODO: move autoruns logic here
+    dwSize = sizeof(value);
+    result = RegQueryValueExW(hKey, SELECTED_DEVICE_VALUE_NAME, NULL, &dwType, (BYTE*)value, &dwSize);
+
+    if (result == ERROR_SUCCESS)
+    {
+        g_selectedAudioDeviceId = value;
+        DebugLog(L"LoadSettingsFromRegistry: result=%d, g_selectedAudioDeviceId='%s'", (result == ERROR_SUCCESS), g_selectedAudioDeviceId->c_str());
+    }
+
 
 	g_bStartupEnabled = IsStartupEnabled();
 
@@ -1410,7 +1579,7 @@ DisplayConfiguration GetCurrentDisplayConfiguration()
 
 }
 
-std::optional<std::wstring> GetFriendlyNameForMonitor(const DISPLAYCONFIG_PATH_INFO& path, bool primary)
+std::optional<DisplayTargetEx> GetDisplayTargetExForPath(const DISPLAYCONFIG_PATH_INFO& path)
 {
 
 
@@ -1424,7 +1593,9 @@ std::optional<std::wstring> GetFriendlyNameForMonitor(const DISPLAYCONFIG_PATH_I
     if (res == ERROR_SUCCESS)
     {
 
-        std::wstring monitorFriendlyName = targetName.monitorFriendlyDeviceName;
+        std::wstring const monitorFriendlyName = targetName.monitorFriendlyDeviceName;
+		std::wstring const monitorDevicePath = targetName.monitorDevicePath;
+		
 
         // now get the adapter name too
         DISPLAYCONFIG_ADAPTER_NAME adapterName = {};
@@ -1434,58 +1605,44 @@ std::optional<std::wstring> GetFriendlyNameForMonitor(const DISPLAYCONFIG_PATH_I
         res = DisplayConfigGetDeviceInfo(&adapterName.header);
         if (res != ERROR_SUCCESS)
         {
-            DebugLog(L"GetFriendlyNameForMonitor: Could not get adapter name for display: %d", res);
+            DebugLog(L"GetDisplayTargetExForPath: Could not get adapter name for display: %d", res);
+            return std::nullopt;
         }
-        else {
-            DebugLog(L"GetFriendlyNameForMonitor: Adapter name: %s", adapterName.adapterDevicePath);
 
-            // e.g. "\\?\PCI#VEN_10DE&DEV_2684&SUBSYS_467519DA&REV_A1#4&...&0008#{...}"
-            std::wstring id(adapterName.adapterDevicePath);
+        DebugLog(L"GetDisplayTargetExForPath: Adapter name: %s", adapterName.adapterDevicePath);
 
-            // 1) strip the leading \\?\
-                if (id.rfind(L"\\\\?\\", 0) == 0)
+        // e.g. "\\?\PCI#VEN_10DE&DEV_2684&SUBSYS_467519DA&REV_A1#4&...&0008#{...}"
+        std::wstring id(adapterName.adapterDevicePath);
+        std::wstring const adapterDevicePath = adapterName.adapterDevicePath;
+
+        // 1) strip the leading '\\?\'
+        if (id.find(L"\\\\?\\", 0) == 0)
+        {
             id.erase(0, 4);
-
-            // 2) turn '#' into '\' so it becomes a proper instance-id
-            std::replace(id.begin(), id.end(), L'#', L'\\');
-
-            // 3) remove the trailing "\{…}" class‐GUID
-            if (auto pos = id.find(L"\\{"); pos != std::wstring::npos)
-                id.resize(pos);
-
-            auto friendlyName = GetFriendlyNameFromInstanceId(id);
-            DebugLog(L"GetFriendlyNameForMonitor: Adapter friendly name: %s", friendlyName.c_str());
-
-            monitorFriendlyName += L" (" + friendlyName + L")";
         }
 
+        // 2) turn '#' into '\' so it becomes a proper instance-id
+        std::replace(id.begin(), id.end(), L'#', L'\\');
 
-        // Determine the adapter that this target belongs to
+        // 3) remove the trailing "\{…}" class‐GUID
+        if (auto pos = id.find(L"\\{"); pos != std::wstring::npos)
+            id.resize(pos);
 
-        // Check the status of the display too
-        if (path.targetInfo.statusFlags & DISPLAYCONFIG_PATH_ACTIVE)
-        {
-            monitorFriendlyName += L" [Active]";
-        }
+        std::wstring const adapterFriendlyName = GetFriendlyNameFromInstanceId(id);
+        DebugLog(L"GetDisplayTargetExForPath: Adapter friendly name: %s", adapterFriendlyName.c_str());
 
+        DebugLog(L"GetDisplayTargetExForPath: Friendly name: %s", monitorFriendlyName.c_str());
 
-        if (primary)
-        {
-            monitorFriendlyName += L" [Primary]";
-        }
-
-        DebugLog(L"GetFriendlyNameForMonitor: Friendly name: %s", monitorFriendlyName.c_str());
-
-        return monitorFriendlyName;
+        return DisplayTargetEx(AdapterPair(path.targetInfo), monitorFriendlyName, adapterFriendlyName, monitorDevicePath, adapterDevicePath);
     }
     else {
-        DebugLog(L"GetFriendlyNameForMonitor: Could not get friendly name of display: %d", res);
+        DebugLog(L"GetDisplayTargetExForPath: Could not get friendly name of display: %d", res);
 		return std::nullopt; // If we can't get the friendly name, return nullopt
     }
 
 }
 
-std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const AdapterPair& target, DisplayConfiguration& dc)
+std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const DisplayTargetEx& target, DisplayConfiguration& dc)
 {
     // Find the path that matches the target display.
 
@@ -1495,9 +1652,10 @@ std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const AdapterPair& targ
 
     for (const auto& path : dc.paths)
     {
-		AdapterPair pathTarget( path.targetInfo );
 
-        if (pathTarget == target)
+        auto pathTargetEx = GetDisplayTargetExForPath(path);
+
+        if (pathTargetEx && *pathTargetEx == target)
         {
             DebugLog(L"FindPathToDisplay: Potential path found");
 			// Now test if this could actually be activated.
@@ -1507,7 +1665,7 @@ std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const AdapterPair& targ
             testPath.flags |= DISPLAYCONFIG_PATH_ACTIVE; // Set the active flag to test if it can be activated
 
             // Use SDC_VALIDATE to check if this target can be activated
-            LONG res = SetDisplayConfig(1, &testPath, dc.modes.size(), dc.modes.data(), SDC_VALIDATE | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES);
+            LONG res = SetDisplayConfig(1, &testPath, static_cast<UINT32>(dc.modes.size()), dc.modes.data(), SDC_VALIDATE | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES);
 
             if (res == ERROR_SUCCESS)
             {
@@ -1522,7 +1680,7 @@ std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const AdapterPair& targ
 }
 
 
-std::vector<DisplayTargetEx> EnumerateConnectedDisplayTargets()
+std::vector<std::pair<DisplayTargetEx,DisplayTargetExStatus>> EnumerateConnectedDisplayTargets()
 {
     DebugLog(L"EnumerateConnectedDisplayTargets: Getting all connected displays");
     // Query all display paths and modes (virtual mode NOT supported, virtual refresh rate IS)
@@ -1531,7 +1689,7 @@ std::vector<DisplayTargetEx> EnumerateConnectedDisplayTargets()
     // Now, use SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED with setting the paths to active to filter all of the display paths for ones that could be activated.
 
     std::unordered_set<AdapterPair> connectedDisplays;
-	std::vector<DisplayTargetEx> connectedTargets;
+	std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> connectedTargets;
 
     for (auto& path : dc.paths)
     {
@@ -1570,15 +1728,24 @@ std::vector<DisplayTargetEx> EnumerateConnectedDisplayTargets()
             }
         }
 
-		auto monitorFriendlyName = GetFriendlyNameForMonitor( path, primary );
-
-        if (monitorFriendlyName)
+		DisplayTargetExStatus status = DisplayTargetExStatus::Inactive;
+        if (primary)
         {
-			connectedDisplays.insert(AdapterPair(path.targetInfo)); // Add to the set of connected display paths
-            connectedTargets.push_back(DisplayTargetEx(
-                AdapterPair(path.targetInfo),
-                *monitorFriendlyName
-				));
+            status = DisplayTargetExStatus::Primary;
+        }
+        else if (active)
+        {
+            status = DisplayTargetExStatus::Active;
+        }
+        
+
+
+		std::optional<DisplayTargetEx> displayTarget = GetDisplayTargetExForPath( path );
+
+        if (displayTarget)
+        {
+			connectedDisplays.insert(displayTarget->id); // Add to the set of connected display paths
+            connectedTargets.push_back(std::make_pair(*displayTarget, status));
         }
 
     }
@@ -1586,7 +1753,7 @@ std::vector<DisplayTargetEx> EnumerateConnectedDisplayTargets()
 
     for (const auto& target : connectedTargets)
     {
-        DebugLog(L"EnumerateConnectedDisplayTargets: Connected display: (%ld.%u,%u) [%s]", target.id.adapterId.HighPart, target.id.adapterId.LowPart, target.id.id, target.monitorFriendlyName.c_str());
+        DebugLog(L"EnumerateConnectedDisplayTargets: Connected display: (%ld.%u,%u) [%s]", target.first.id.adapterId.HighPart, target.first.id.adapterId.LowPart, target.first.id.id, target.first.monitorFriendlyName.c_str());
     }
 
     return connectedTargets;
