@@ -15,7 +15,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        platform: [x64, x86, ARM64]
+        platform: [x64, Win32, ARM64]
     
     steps:
     - uses: actions/checkout@v4
@@ -50,8 +50,8 @@ jobs:
     - name: Build x64 Release
       run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=x64
       
-    - name: Build x86 Release
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=x86
+    - name: Build Win32 Release
+      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=Win32
       
     - name: Build ARM64 Release
       run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=ARM64
@@ -60,7 +60,7 @@ jobs:
       run: |
         # Create directories
         mkdir release-x64
-        mkdir release-x86
+        mkdir release-win32
         mkdir release-arm64
         
         # Package x64 build
@@ -68,10 +68,10 @@ jobs:
         Get-ChildItem -Path "x64/Release" -Filter "*.dll" | Copy-Item -Destination release-x64/
         Compress-Archive -Path release-x64/* -DestinationPath BigPictureSwitch-x64-${{ github.ref_name }}.zip
         
-        # Package x86 build  
-        Get-ChildItem -Path "x86/Release" -Filter "*.exe" | Copy-Item -Destination release-x86/
-        Get-ChildItem -Path "x86/Release" -Filter "*.dll" | Copy-Item -Destination release-x86/
-        Compress-Archive -Path release-x86/* -DestinationPath BigPictureSwitch-x86-${{ github.ref_name }}.zip
+        # Package Win32 build  
+        Get-ChildItem -Path "Win32/Release" -Filter "*.exe" | Copy-Item -Destination release-win32/
+        Get-ChildItem -Path "Win32/Release" -Filter "*.dll" | Copy-Item -Destination release-win32/
+        Compress-Archive -Path release-win32/* -DestinationPath BigPictureSwitch-Win32-${{ github.ref_name }}.zip
         
         # Package ARM64 build
         Get-ChildItem -Path "ARM64/Release" -Filter "*.exe" | Copy-Item -Destination release-arm64/
@@ -84,7 +84,7 @@ jobs:
       with:
         files: |
           BigPictureSwitch-x64-${{ github.ref_name }}.zip
-          BigPictureSwitch-x86-${{ github.ref_name }}.zip
+          BigPictureSwitch-Win32-${{ github.ref_name }}.zip
           BigPictureSwitch-arm64-${{ github.ref_name }}.zip
         generate_release_notes: true
         body: |
@@ -94,19 +94,19 @@ jobs:
           
           ### Downloads
           - **BigPictureSwitch-x64-${{ github.ref_name }}.zip** - 64-bit version (Intel/AMD)
-          - **BigPictureSwitch-x86-${{ github.ref_name }}.zip** - 32-bit version (Intel/AMD)
+          - **BigPictureSwitch-Win32-${{ github.ref_name }}.zip** - 32-bit version (Intel/AMD)
           - **BigPictureSwitch-arm64-${{ github.ref_name }}.zip** - ARM64 version (Windows on ARM devices)
           
           ### Installation
           1. Download the appropriate version for your system:
              - Most desktop/laptop users: x64 version
-             - Older 32-bit systems: x86 version
+             - Older 32-bit systems: Win32 version
              - ARM-based Windows devices (Surface Pro X, etc.): arm64 version
           2. Extract the zip file
           3. Run BigPictureSwitch.exe
           
           ### System Requirements
           - Windows 10/11 (version 1709 or later for ARM64)
-          - Compatible with Intel/AMD x64, Intel/AMD x86, and ARM64 processors
+          - Compatible with Intel/AMD x64, Intel/AMD Win32, and ARM64 processors
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
