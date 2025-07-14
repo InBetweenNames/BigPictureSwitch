@@ -5,9 +5,9 @@ Big Picture Switch manages your audio and video devices to make the experience a
 
 Based off the excellent work of [Big Picture Audio Switch](https://github.com/cinterre/BigPictureAudioSwitch/).
 
-# Usage
-
 ![A screenshot of Big Picture Switch](screenshot.png)
+
+# Usage
 
 -   Clicking the system tray icon will allow you to configure your "Big Picture" devices.
 -   Selecting an audio or video device will trigger them to be switched to when Big Picture Mode turns on
