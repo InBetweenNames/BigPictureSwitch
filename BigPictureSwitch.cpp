@@ -318,6 +318,7 @@ std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const DisplayTargetEx& 
 DisplayConfiguration GetCurrentDisplayConfiguration();
 std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> EnumerateConnectedDisplayTargets();
 DisplayConfiguration QueryDisplayConfiguration(const UINT32 flags, DISPLAYCONFIG_TOPOLOGY_ID* currentTopology);
+void SetDesktopDisplayConfiguration(DisplayConfiguration& dc);
 
 
 // Global Variables:
@@ -494,6 +495,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     DebugLog(L"wWinMain: Loading previously selected audio device");
     LoadSettingsFromRegistry();
 
+    // Restore the excluded display configuration if applicable
+    if (g_bExcludeSelectedDisplayFromDesktop) {
+        auto dc = GetCurrentDisplayConfiguration();
+        SetDesktopDisplayConfiguration(dc);
+    }
+
     // Initialize window event hook for Steam Big Picture Mode detection
     DebugLog(L"wWinMain: Initializing window event hook");
     if (!InitializeWindowEventHook())
@@ -642,6 +649,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDM_EXCLUDE_DISPLAY_FROM_DESKTOP:
         {
             g_bExcludeSelectedDisplayFromDesktop = !g_bExcludeSelectedDisplayFromDesktop;
+            // FIXME: do the change immediately
+            // This should work both ways because we use QDC_DATABASE_CURRENT
+            auto dc = GetCurrentDisplayConfiguration();
+            SetDesktopDisplayConfiguration(dc);
             SaveSettingsToRegistry();
             break;
 		}
@@ -1168,6 +1179,38 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
     }
 }
 
+void SetDesktopDisplayConfiguration(DisplayConfiguration& dc)
+{
+    // restore original display configuration exactly as it was before entering Big Picture Mode
+
+    if (g_bExcludeSelectedDisplayFromDesktop && g_selectedDisplayTarget)
+    {
+        // Need to remove the selected display from the g_origDisplayConfig
+        std::erase_if(dc.paths, [&](const DISPLAYCONFIG_PATH_INFO& path) {
+            return GetDisplayTargetExForPath(path) == g_selectedDisplayTarget;
+            });
+
+    }
+
+    auto res = SetDisplayConfig(
+        static_cast<UINT32>(dc.paths.size()), dc.paths.data(),
+        static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
+    );
+
+    if (res != ERROR_SUCCESS)
+    {
+        DebugLog(L"SetDesktopDisplayConfiguration: SetDisplayConfig failed with error 0x%08X", res);
+        std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
+        MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
+
+    }
+    else
+    {
+        DebugLog(L"SetDesktopDisplayConfiguration: Successfully switched to selected display");
+    }
+}
+
 void ExitBigPictureMode()
 {
     if (g_bSteamBigPictureModeRunning)
@@ -1177,34 +1220,10 @@ void ExitBigPictureMode()
         if (g_origDisplayConfig)
         {
 
-			// restore original display configuration exactly as it was before entering Big Picture Mode
+			// restore original display configuration as it was before entering Big Picture Mode (most recent saved database config)
 
-            if (g_bExcludeSelectedDisplayFromDesktop && g_selectedDisplayTarget)
-            {
-                // Need to remove the selected display from the g_origDisplayConfig
-                std::erase_if(g_origDisplayConfig->paths, [&](const DISPLAYCONFIG_PATH_INFO& path) {
-                    return GetDisplayTargetExForPath(path) == g_selectedDisplayTarget;
-					});
-
-			}
-
-            auto res = SetDisplayConfig(
-                static_cast<UINT32>(g_origDisplayConfig->paths.size()), g_origDisplayConfig->paths.data(),
-                static_cast<UINT32>(g_origDisplayConfig->modes.size()), g_origDisplayConfig->modes.data(),
-                SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
-            );
-
-            if (res != ERROR_SUCCESS)
-            {
-                DebugLog(L"ExitBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
-				std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
-                MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
-
-            }
-            else
-            {
-                DebugLog(L"ExitBigPictureMode: Successfully switched to selected display");
-            }
+            SetDesktopDisplayConfiguration(*g_origDisplayConfig);
+            g_origDisplayConfig.reset();
         }
         
         // Restore original audio device
@@ -1215,11 +1234,10 @@ void ExitBigPictureMode()
             g_origAudioDeviceId.clear();
         }
         
-        // Restore original display configuration (all previously active displays)
 
         g_bSteamBigPictureModeRunning = false;
-        g_origDisplayConfig.reset();
     }
+
 }
 
 bool WindowMatches(WCHAR* szClassName, WCHAR* szWindowTitle)
