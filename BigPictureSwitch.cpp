@@ -1,8 +1,6 @@
 ﻿// BigPictureAudioSwitch2.cpp : Defines the entry point for the application.
-//
 
- /* Exclude redundant APIs such as Cryptography, DDE, RPC, Shell, and Windows Sockets. */
-#define WIN32_LEAN_AND_MEAN
+#pragma warning(disable: 4100) // Disable unreferenced formal parameter warnings
 
 #include "framework.h"
 #include "BigPictureSwitch.h"
@@ -475,7 +473,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // Initialize global strings
     DebugLog(L"wWinMain: Loading global strings");
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
-    LoadStringW(hInstance, IDC_BIGPICTURESWITCH, szWindowClass, MAX_LOADSTRING);
+    LoadStringW(hInstance, IDS_APP_TITLE, szWindowClass, MAX_LOADSTRING);
     RegisterWindow(hInstance);
 
     // Perform application initialization:
@@ -496,7 +494,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     LoadSettingsFromRegistry();
 
     // Restore the excluded display configuration if applicable
-    if (g_bExcludeSelectedDisplayFromDesktop) {
+    if (g_bExcludeSelectedDisplayFromDesktop && g_selectedDisplayTarget) {
         auto dc = GetCurrentDisplayConfiguration();
         SetDesktopDisplayConfiguration(dc);
     }
@@ -763,7 +761,7 @@ void ShowTrayMenu(HWND hWnd)
         // Show all connected displays and their status
 
 		g_displayTargets = EnumerateConnectedDisplayTargets();
-        AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Switch to Display Target:");
+        AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Switch to Display:");
         bool found = false;
         for (size_t i = 0; i < g_displayTargets.size(); ++i)
         {
@@ -1306,6 +1304,7 @@ BOOL InitializeWindowEventHook()
     );
 
     DebugLog(L"InitializeWindowEventHook: g_hWinEventHook=0x%p", g_hWinEventHook);
+    DebugLog(L"InitializeWindowEventHook: hShowHideHook=0x%p", hShowHideHook);
     return TRUE;
 }
 
