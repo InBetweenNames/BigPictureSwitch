@@ -14,6 +14,7 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
 -   Clicking a selected item will deselect the device (if no device is selected, no action is taken)
     -   e.g., if you prefer to let Steam manage your displays, set your preferred display and then leave the display unchecked
 -   If "Exclude selected display from desktop" is enabled, then the selected device will NOT appear in your desktop configuration
+    -   i.e., if you have extended your desktop across multiple monitors, your selected device will be excluded from that list.
     -   This is ideal for a TV that you don't use unless you're playing games on it.
     -   A best effort is made to do this.
 -   No display changes are permanent (i.e. saved to the Windows display database).
@@ -47,6 +48,7 @@ So... that's how I got to developing Big Picture Switch.
 -   Zero dependencies other than Windows 7 and above (in principle?  Haven't actually tested it.  I use Windows 11 so YMMV).
 -   Event based rather than polling based
     -   Receives events for window creation and destruction and then just matches that against Steam to detect Big Picture mode
+    -   0% CPU usage when there is nothing to do
 -   Efficiency mode support (not that it really matters, as the application is idle except when it receives events, but why not?)
 -   Manages display configurations _and_ audio configurations
 
