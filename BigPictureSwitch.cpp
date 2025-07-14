@@ -8,6 +8,7 @@
 #include "BigPictureSwitch.h"
 
 
+
 #include <unordered_map>
 #include <unordered_set>
 #include <optional>
@@ -35,6 +36,7 @@
 #define SELECTED_DISPLAY_DEVICE_TARGET_MONITOR_PATH L"SelectedDisplayDeviceTargetMonitorPath"
 #define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME L"SelectedDisplayDeviceTargetAdapterFriendlyName"
 #define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH L"SelectedDisplayDeviceTargetAdapterPath"
+#define SELECTED_DISPLAY_EXCLUDE L"SelectedDisplayExcludeFromDesktop"
 
 // Undocumented interface for setting default audio device
 interface DECLSPEC_UUID("f8679f50-850a-41cf-9c72-430f290290c8") IPolicyConfig;
@@ -152,8 +154,6 @@ void DebugLog(const wchar_t* format, ...)
     swprintf_s(buffer, L"PANIC: " msg L" at %S:%d", ##__VA_ARGS__, __FILE__, __LINE__); \
     FatalAppExit(0, buffer); \
 } while(0)
-
-
 
 
 struct AudioDevice
@@ -340,7 +340,8 @@ IPolicyConfig* g_pPolicyConfig = nullptr; // Pointer to the PolicyConfig interfa
 
 // Steam Big Picture Mode detection globals
 HWINEVENTHOOK g_hWinEventHook = nullptr;
-BOOL g_bSteamBigPictureModeRunning = FALSE;
+bool g_bSteamBigPictureModeRunning = false;
+bool g_bExcludeSelectedDisplayFromDesktop = false; // Flag to indicate if the selected display should be excluded from the desktop
 std::optional<DisplayConfiguration> g_origDisplayConfig;
 std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> g_displayTargets;
 std::optional<DisplayTargetEx> g_selectedDisplayTarget;
@@ -626,6 +627,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         // Parse the menu selections:
         switch (wmId)
         {
+        case IDM_ABOUT:
+            // Open the web browser to the GitHub page
+            ShellExecuteW(
+                nullptr,               // no owner window
+                L"open",               // “open” the file/URL
+                L"https://github.com/InBetweenNames/BigPictureSwitch",  
+                nullptr,               // no extra parameters
+                nullptr,               // default working directory
+                SW_SHOWNORMAL          // show window normally
+            );
+
+			break;
+        case IDM_EXCLUDE_DISPLAY_FROM_DESKTOP:
+        {
+            g_bExcludeSelectedDisplayFromDesktop = !g_bExcludeSelectedDisplayFromDesktop;
+            SaveSettingsToRegistry();
+            break;
+		}
         case IDM_STARTUP:
         {
 			g_bStartupEnabled = !g_bStartupEnabled;
@@ -755,6 +774,13 @@ void ShowTrayMenu(HWND hWnd)
 
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
+		UINT flags = MF_STRING;
+        if (g_bExcludeSelectedDisplayFromDesktop)
+			flags |= MF_CHECKED;
+        AppendMenuW(hMenu, flags, IDM_EXCLUDE_DISPLAY_FROM_DESKTOP, L"Exclude selected display from desktop");
+
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+
         // Add startup option with checkmark if enabled
         UINT startupFlags = MF_STRING;
         if (IsStartupEnabled())
@@ -762,6 +788,9 @@ void ShowTrayMenu(HWND hWnd)
             startupFlags |= MF_CHECKED;
         }
         AppendMenuW(hMenu, startupFlags, IDM_STARTUP, L"Run on Startup");
+
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hMenu, MF_STRING, IDM_ABOUT, L"About");
 
         // Add another separator and the exit option
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -1087,7 +1116,10 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 
                 if (res != ERROR_SUCCESS)
                 {
-                    PANIC(L"EnterBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
+                    DebugLog(L"EnterBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
+					// Make a message box to inform the user
+                    std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
+                    MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
                 }
                 else
                 {
@@ -1132,7 +1164,7 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
             DebugLog(L"EnterBigPictureMode: Audio switching is disabled");
         }
         
-        g_bSteamBigPictureModeRunning = TRUE;
+        g_bSteamBigPictureModeRunning = true;
     }
 }
 
@@ -1147,6 +1179,15 @@ void ExitBigPictureMode()
 
 			// restore original display configuration exactly as it was before entering Big Picture Mode
 
+            if (g_bExcludeSelectedDisplayFromDesktop && g_selectedDisplayTarget)
+            {
+                // Need to remove the selected display from the g_origDisplayConfig
+                std::erase_if(g_origDisplayConfig->paths, [&](const DISPLAYCONFIG_PATH_INFO& path) {
+                    return GetDisplayTargetExForPath(path) == g_selectedDisplayTarget;
+					});
+
+			}
+
             auto res = SetDisplayConfig(
                 static_cast<UINT32>(g_origDisplayConfig->paths.size()), g_origDisplayConfig->paths.data(),
                 static_cast<UINT32>(g_origDisplayConfig->modes.size()), g_origDisplayConfig->modes.data(),
@@ -1155,7 +1196,10 @@ void ExitBigPictureMode()
 
             if (res != ERROR_SUCCESS)
             {
-                PANIC(L"ExitBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
+                DebugLog(L"ExitBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
+				std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
+                MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
+
             }
             else
             {
@@ -1173,7 +1217,7 @@ void ExitBigPictureMode()
         
         // Restore original display configuration (all previously active displays)
 
-        g_bSteamBigPictureModeRunning = FALSE;
+        g_bSteamBigPictureModeRunning = false;
         g_origDisplayConfig.reset();
     }
 }
@@ -1364,6 +1408,9 @@ BOOL SaveSettingsToRegistry()
         result = RegDeleteValueW(hKey, SELECTED_DISPLAY_DEVICE_TARGET);
         DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
     }
+    DWORD exclude = g_bExcludeSelectedDisplayFromDesktop ? 1 : 0;
+    result = RegSetValueExW(hKey, SELECTED_DISPLAY_EXCLUDE, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&exclude), sizeof(exclude));
+    DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_EXCLUDE result=%d", (result == ERROR_SUCCESS));
 
     RegCloseKey(hKey);
 
@@ -1476,13 +1523,23 @@ BOOL LoadSettingsFromRegistry()
     }
 
     dwSize = sizeof(value);
-    result = RegQueryValueExW(hKey, SELECTED_DEVICE_VALUE_NAME, NULL, &dwType, (BYTE*)value, &dwSize);
+    result = RegQueryValueExW(hKey, SELECTED_DEVICE_VALUE_NAME, 0, &dwType, (BYTE*)value, &dwSize);
 
     if (result == ERROR_SUCCESS)
     {
         g_selectedAudioDeviceId = value;
         DebugLog(L"LoadSettingsFromRegistry: result=%d, g_selectedAudioDeviceId='%s'", (result == ERROR_SUCCESS), g_selectedAudioDeviceId->c_str());
     }
+
+    DWORD exclude = 0;
+    dwSize = sizeof(DWORD);
+    result = RegQueryValueExW(hKey, SELECTED_DISPLAY_EXCLUDE, 0, &dwType, reinterpret_cast<BYTE*>(&exclude), &dwSize);
+
+    if (result == ERROR_SUCCESS)
+    {
+        g_bExcludeSelectedDisplayFromDesktop = exclude != 0;
+    }
+    DebugLog(L"LoadSettingsFromRegistry: result=%d, g_bExcludeSelectedDisplayFromDesktop = %d", exclude);
 
 
 	g_bStartupEnabled = IsStartupEnabled();
@@ -1543,9 +1600,17 @@ DisplayConfiguration GetCurrentDisplayConfiguration()
     DebugLog(L"GetCurrentDisplayConfiguration: Getting current display configuration");
 
     // Here, we want to ensure we capture the entire current display configuration, including virtual modes and refresh rates.
-    //DISPLAYCONFIG_TOPOLOGY_ID currentTopology;
+    DISPLAYCONFIG_TOPOLOGY_ID currentTopology;
 
-    auto ret = QueryDisplayConfiguration(QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
+    // NOTE: we use QDC_DISPLAY_CURRENT because Steam itself can mess around with the primary desktop.
+    // If we used QDC_ACTIVE_PATHS, and Steam switched the primary desktop to the other display, then we would very likely
+    // capture that configuration here (depending if this code runs first or if Steam's own SetDisplayConfig runs first).
+    // So to mitigate this, we just get the most current working configuration from the database itself.  Since Steam does not
+    // save its display configuration to the database, we're safe here.
+
+    auto ret = QueryDisplayConfiguration(QDC_DATABASE_CURRENT | QDC_VIRTUAL_MODE_AWARE | QDC_VIRTUAL_REFRESH_RATE_AWARE, &currentTopology);
+
+    DebugLog(L"GetCurrentDisplayConfiguration: currentTopology = %d", currentTopology);
 
     return ret;
 
