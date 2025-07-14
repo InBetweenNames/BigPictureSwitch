@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+  actions: read
+
 env:
   BUILD_CONFIGURATION: Release
 
@@ -36,48 +40,48 @@ jobs:
           ${{ matrix.platform }}/${{ env.BUILD_CONFIGURATION }}/*.pdb
         retention-days: 30
 
-  release:
+  package:
     needs: build
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        platform: [x64, Win32, ARM64]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download ${{ matrix.platform }} artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: BigPictureSwitch-${{ matrix.platform }}-${{ github.sha }}
+        path: release-${{ matrix.platform }}/
+    
+    - name: Create ${{ matrix.platform }} Release Package
+      run: |
+        Compress-Archive -Path release-${{ matrix.platform }}/* -DestinationPath BigPictureSwitch-${{ matrix.platform }}-${{ github.ref_name }}.zip
+      shell: pwsh
+    
+    - name: Upload release package
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-package-${{ matrix.platform }}
+        path: BigPictureSwitch-${{ matrix.platform }}-${{ github.ref_name }}.zip
+        retention-days: 7
+
+  release:
+    needs: package
     runs-on: windows-latest
     if: startsWith(github.ref, 'refs/tags/v')
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v1.0.2
-      
-    - name: Build x64 Release
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=x64
-      
-    - name: Build Win32 Release
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=Win32
-      
-    - name: Build ARM64 Release
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=ARM64
-    
-    - name: Create Release Packages
-      run: |
-        # Create directories
-        mkdir release-x64
-        mkdir release-win32
-        mkdir release-arm64
-        
-        # Package x64 build
-        Get-ChildItem -Path "x64/Release" -Filter "*.exe" | Copy-Item -Destination release-x64/
-        Get-ChildItem -Path "x64/Release" -Filter "*.dll" | Copy-Item -Destination release-x64/
-        Compress-Archive -Path release-x64/* -DestinationPath BigPictureSwitch-x64-${{ github.ref_name }}.zip
-        
-        # Package Win32 build  
-        Get-ChildItem -Path "Win32/Release" -Filter "*.exe" | Copy-Item -Destination release-win32/
-        Get-ChildItem -Path "Win32/Release" -Filter "*.dll" | Copy-Item -Destination release-win32/
-        Compress-Archive -Path release-win32/* -DestinationPath BigPictureSwitch-Win32-${{ github.ref_name }}.zip
-        
-        # Package ARM64 build
-        Get-ChildItem -Path "ARM64/Release" -Filter "*.exe" | Copy-Item -Destination release-arm64/
-        Get-ChildItem -Path "ARM64/Release" -Filter "*.dll" | Copy-Item -Destination release-arm64/
-        Compress-Archive -Path release-arm64/* -DestinationPath BigPictureSwitch-arm64-${{ github.ref_name }}.zip
-      shell: pwsh
+    - name: Download all release packages
+      uses: actions/download-artifact@v4
+      with:
+        pattern: release-package-*
+        merge-multiple: true
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
@@ -85,7 +89,7 @@ jobs:
         files: |
           BigPictureSwitch-x64-${{ github.ref_name }}.zip
           BigPictureSwitch-Win32-${{ github.ref_name }}.zip
-          BigPictureSwitch-arm64-${{ github.ref_name }}.zip
+          BigPictureSwitch-ARM64-${{ github.ref_name }}.zip
         generate_release_notes: true
         body: |
           ## Changes
@@ -95,7 +99,7 @@ jobs:
           ### Downloads
           - **BigPictureSwitch-x64-${{ github.ref_name }}.zip** - 64-bit version (Intel/AMD)
           - **BigPictureSwitch-Win32-${{ github.ref_name }}.zip** - 32-bit version (Intel/AMD)
-          - **BigPictureSwitch-arm64-${{ github.ref_name }}.zip** - ARM64 version (Windows on ARM devices)
+          - **BigPictureSwitch-ARM64-${{ github.ref_name }}.zip** - ARM64 version (Windows on ARM devices)
           
           ### Installation
           1. Download the appropriate version for your system:
