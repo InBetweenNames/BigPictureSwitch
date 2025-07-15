@@ -1092,6 +1092,36 @@ BOOL SaveStartupEnabled()
     return (result == ERROR_SUCCESS);
 }
 
+LONG SetDisplayConfigWrapper(_In_ UINT32 numPathArrayElements,
+    _In_reads_opt_(numPathArrayElements) DISPLAYCONFIG_PATH_INFO* pathArray,
+    _In_ UINT32 numModeInfoArrayElements,
+    _In_reads_opt_(numModeInfoArrayElements) DISPLAYCONFIG_MODE_INFO* modeInfoArray,
+    _In_ UINT32 flags)
+{
+	LONG res = ERROR_GEN_FAILURE;
+	int attempts = 0;
+
+    do {
+
+        res = SetDisplayConfig(
+            numPathArrayElements, pathArray,
+            numModeInfoArrayElements, modeInfoArray,
+            flags
+        );
+
+        if (res != ERROR_SUCCESS)
+        {
+            DebugLog(L"SetDesktopDisplayConfiguration: SetDisplayConfig failed with error 0x%08X attempt %d", res, attempts);
+            Sleep(1000);
+
+        }
+
+        attempts++;
+    } while (res != ERROR_SUCCESS && attempts < 5);
+
+    return res;
+}
+
 void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 {
     if (!g_bSteamBigPictureModeRunning)
@@ -1106,23 +1136,21 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 
             DisplayConfiguration dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
 
-            if (auto pathToTarget = FindPathToDisplay(*g_selectedDisplayTarget, dc)) {
+            if (auto pathToTarget = FindPathToDisplay(*g_selectedDisplayTarget, dc); pathToTarget) {
 
                 // save old display configuration
                 g_origDisplayConfig = GetCurrentDisplayConfiguration();
 
                 // use the selected display device as a topology with exactly one active display
-                auto res = SetDisplayConfig(
-                    1, &*pathToTarget,  // only paths
+                auto res = SetDisplayConfigWrapper(1, &*pathToTarget,  // only paths
                     static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
                     //SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE
-                    SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
-                );
+                    SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE);
+              
 
                 if (res != ERROR_SUCCESS)
                 {
-                    DebugLog(L"EnterBigPictureMode: SetDisplayConfig failed with error 0x%08X", res);
-					// Make a message box to inform the user
+                    // Make a message box to inform the user
                     std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
                     MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
                 }
@@ -1130,6 +1158,7 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
                 {
                     DebugLog(L"EnterBigPictureMode: Successfully switched to external display");
                 }
+
 
                 // testing
 
@@ -1186,18 +1215,14 @@ void SetDesktopDisplayConfiguration(DisplayConfiguration& dc)
 
     }
 
-    auto res = SetDisplayConfig(
-        static_cast<UINT32>(dc.paths.size()), dc.paths.data(),
-        static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
-        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES
-    );
+    auto res = SetDisplayConfigWrapper(static_cast<UINT32>(dc.paths.size()), dc.paths.data(),
+        static_cast<UINT32>(dc.modes.size()), dc.modes.data(), SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE);
+
 
     if (res != ERROR_SUCCESS)
     {
-        DebugLog(L"SetDesktopDisplayConfiguration: SetDisplayConfig failed with error 0x%08X", res);
         std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
         MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
-
     }
     else
     {

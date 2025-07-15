@@ -1,5 +1,7 @@
 # Big Picture Switch
 
+![Big picture Switch logo](logo.png)
+
 Ever want to use your main desktop as a game console using Steam?  Look no further!
 Big Picture Switch manages your audio and video devices to make the experience as seamless as possible.
 
@@ -17,13 +19,36 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
     -   i.e., if you have extended your desktop across multiple monitors, your selected device will be excluded from that list.
     -   This is ideal for a TV that you don't use unless you're playing games on it.
     -   A best effort is made to do this.
--   No display changes are permanent (i.e. saved to the Windows display database).
     If something weird happens, just close the program and hit Win+P to get back your original configuration.
 
 # Planned features
 
 -   [libcec](https://github.com/Pulse-Eight/libcec) integration to automatically power on/off the display and change its inputs
     -   This one is waiting on me getting my USB HDMI-CEC dongle in the mail
+-   Ability to set the window title/class for listening for Big Picture Mode (e.g. to use with Kodi or something like that)
+
+# Non planned features (WONTFIX)
+- Support for other OSes, such as Linux or macOS
+    -   I would also have to rewrite everything in some kind of portable GUI framework which sounds like a lot of bloat
+      - Or special case it which would be even worse
+    -   I would need to test and vet any third party libraries to do the audio device/display device switching or write this myself
+
+# Differences compared to BPAS
+
+-   This is native code in C++, not C#, which is a bit easier to work with because audio switching in Windows needs to be done through COM anyway
+    -   And there is no native C# library to do this other than AudioSwitcher, which depends on .NET Framework, etc...
+-   Zero dependencies other than Windows 7 and above (in principle?  Haven't actually tested it.  I use Windows 11 so YMMV).
+-   Event based rather than polling based
+    -   Receives events for window creation and destruction and then just matches that against Steam to detect Big Picture mode
+    -   0% CPU usage when there is nothing to do
+-   Efficiency mode support (not that it really matters, as the application is idle except when it receives events, but why not?)
+-   Manages display configurations _and_ audio configurations
+
+
+# Installation
+
+Place somewhere you won't delete it, and run it.  You can mark it to start with Windows.  I have only tested it on Windows 11 (which I recommend you use anyway).
+
 
 # Motivation
 
@@ -41,17 +66,12 @@ C++ was the most straightforward choice to do this with minimal overhead and blo
 
 So... that's how I got to developing Big Picture Switch.
 
-# Differences compared to BPAS
-
--   This is native code in C++, not C#, which is a bit easier to work with because audio switching in Windows needs to be done through COM anyway
-    -   And there is no native C# library to do this other than AudioSwitcher, which depends on .NET Framework, etc...
--   Zero dependencies other than Windows 7 and above (in principle?  Haven't actually tested it.  I use Windows 11 so YMMV).
--   Event based rather than polling based
-    -   Receives events for window creation and destruction and then just matches that against Steam to detect Big Picture mode
-    -   0% CPU usage when there is nothing to do
--   Efficiency mode support (not that it really matters, as the application is idle except when it receives events, but why not?)
--   Manages display configurations _and_ audio configurations
-
-# Installation
-
-Place somewhere you won't delete it, and run it.  You can mark it to start with Windows.
+# Some notes/troubleshooting tips
+-   The SetDisplayConfig calls need to use `SDC_SAVE_TO_DATABASE` because otherwise, some games will attempt to set the display
+    configuration themselves, and use the database to do it.  So, if it wasn't saved, then the game could potentially end up
+    on the wrong monitor.
+-   The original display configuration is restored when Big Picture Mode is exited (and saved to the database).
+-   Display configuration switches happen with up to 5 attempts with a 1 second delay between each.  This seems to work well enough so far.
+  -  Sometimes SetDisplayConfig can fail with `ERROR_GEN_FAILURE` -- not much I can do about that.  Hardware can be finicky.
+-   If the application exited improperly, it seems Windows is pretty robust at fixing up your displays, just hit Win+P to get back to your original configuration.
+  -  Hopefully this doesn't happen too often.
