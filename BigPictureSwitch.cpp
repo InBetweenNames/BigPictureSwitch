@@ -1,4 +1,4 @@
-﻿// BigPictureAudioSwitch2.cpp : Defines the entry point for the application.
+// BigPictureAudioSwitch2.cpp : Defines the entry point for the application.
 
 #pragma warning(disable: 4100) // Disable unreferenced formal parameter warnings
 

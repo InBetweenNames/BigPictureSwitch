@@ -71,6 +71,7 @@ if(MSVC)
         /permissive-
         /Zc:__cplusplus
         /EHsc
+        /utf-8
     )
     
     # Debug/Release specific options
