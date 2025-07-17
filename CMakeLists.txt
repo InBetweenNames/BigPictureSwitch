@@ -59,8 +59,6 @@ target_compile_definitions(BigPictureSwitch PRIVATE
     WIN32_LEAN_AND_MEAN
     UNICODE
     _UNICODE
-    _WIN32_WINNT=0x0A00  # Windows 10
-    WINVER=0x0A00
 )
 
 # Compiler options
