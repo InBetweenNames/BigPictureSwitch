@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CMake Build
 
 on:
   push:
@@ -12,32 +12,34 @@ permissions:
   actions: read
 
 env:
-  BUILD_CONFIGURATION: Release
+  BUILD_TYPE: Release
 
 jobs:
   build:
     runs-on: windows-latest
     strategy:
       matrix:
-        platform: [x64, Win32, ARM64]
+        arch: [x64, x86, arm64]
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Add MSBuild to PATH
-      uses: microsoft/setup-msbuild@v1.0.2
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Configure CMake
+      run: cmake -G "Visual Studio 17 2022" --preset ${{ matrix.arch }}-release
       
     - name: Build
-      run: msbuild /m /p:Configuration=${{env.BUILD_CONFIGURATION}} /p:Platform=${{matrix.platform}}
+      run: cmake --build build/${{ matrix.arch }}-release --config Release
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: BigPictureSwitch-${{ matrix.platform }}-${{ github.sha }}
+        name: BigPictureSwitch-${{ matrix.arch }}-${{ github.sha }}
         path: |
-          ${{ matrix.platform }}/${{ env.BUILD_CONFIGURATION }}/*.exe
-          ${{ matrix.platform }}/${{ env.BUILD_CONFIGURATION }}/*.dll
-          ${{ matrix.platform }}/${{ env.BUILD_CONFIGURATION }}/*.pdb
+          build/${{ matrix.arch }}-release/BigPictureSwitch.exe
+          build/${{ matrix.arch }}-release/BigPictureSwitch.pdb
         retention-days: 30
 
   release:
@@ -59,11 +61,11 @@ jobs:
         # Package x64 build
         Compress-Archive -Path BigPictureSwitch-x64-${{ github.sha }}/* -DestinationPath BigPictureSwitch-x64-${{ github.ref_name }}.zip
         
-        # Package Win32 build  
-        Compress-Archive -Path BigPictureSwitch-Win32-${{ github.sha }}/* -DestinationPath BigPictureSwitch-Win32-${{ github.ref_name }}.zip
+        # Package x86 build (was Win32)
+        Compress-Archive -Path BigPictureSwitch-x86-${{ github.sha }}/* -DestinationPath BigPictureSwitch-x86-${{ github.ref_name }}.zip
         
         # Package ARM64 build
-        Compress-Archive -Path BigPictureSwitch-ARM64-${{ github.sha }}/* -DestinationPath BigPictureSwitch-ARM64-${{ github.ref_name }}.zip
+        Compress-Archive -Path BigPictureSwitch-arm64-${{ github.sha }}/* -DestinationPath BigPictureSwitch-arm64-${{ github.ref_name }}.zip
       shell: pwsh
     
     - name: Create Release
@@ -71,8 +73,8 @@ jobs:
       with:
         files: |
           BigPictureSwitch-x64-${{ github.ref_name }}.zip
-          BigPictureSwitch-Win32-${{ github.ref_name }}.zip
-          BigPictureSwitch-ARM64-${{ github.ref_name }}.zip
+          BigPictureSwitch-x86-${{ github.ref_name }}.zip
+          BigPictureSwitch-arm64-${{ github.ref_name }}.zip
         generate_release_notes: true
         body: |
           ## Changes
@@ -81,19 +83,16 @@ jobs:
           
           ### Downloads
           - **BigPictureSwitch-x64-${{ github.ref_name }}.zip** - 64-bit version (Intel/AMD)
-          - **BigPictureSwitch-Win32-${{ github.ref_name }}.zip** - 32-bit version (Intel/AMD)
-          - **BigPictureSwitch-ARM64-${{ github.ref_name }}.zip** - ARM64 version (Windows on ARM devices)
+          - **BigPictureSwitch-x86-${{ github.ref_name }}.zip** - 32-bit version (Intel/AMD)
+          - **BigPictureSwitch-arm64-${{ github.ref_name }}.zip** - ARM64 version (Windows on ARM devices)
           
           ### Installation
-          1. Download the appropriate version for your system:
-             - Most desktop/laptop users: x64 version
-             - Older 32-bit systems: Win32 version
-             - ARM-based Windows devices (Surface Pro X, etc.): arm64 version
+          1. Download the appropriate version for your system
           2. Extract the zip file
           3. Run BigPictureSwitch.exe
           
           ### System Requirements
           - Windows 10/11 (version 1709 or later for ARM64)
-          - Compatible with Intel/AMD x64, Intel/AMD Win32, and ARM64 processors
+          - Compatible with Intel/AMD x64, Intel/AMD x86, and ARM64 processors
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
