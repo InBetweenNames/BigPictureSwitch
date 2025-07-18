@@ -16,8 +16,10 @@ ExternalProject_Add(platform
   SOURCE_DIR    ${CMAKE_SOURCE_DIR}/platform
   BINARY_DIR    ${CMAKE_BINARY_DIR}/platform-build
   INSTALL_DIR   ${CMAKE_BINARY_DIR}/vendor
+  BUILD_BYPRODUCTS
+    <INSTALL_DIR>/lib/p8-platform.lib
   INSTALL_COMMAND cmake --install . --prefix ${CMAKE_BINARY_DIR}/vendor --config ${CMAKE_BUILD_TYPE}
-  CMAKE_ARGS    -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/vendor
+  CMAKE_ARGS    -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/vendor -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 )
 
 set(CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/vendor" ${CMAKE_PREFIX_PATH})
@@ -28,9 +30,9 @@ ExternalProject_Add(libcec
   INSTALL_DIR   ${CMAKE_BINARY_DIR}/vendor
   DEPENDS       platform
   BUILD_BYPRODUCTS
-    <INSTALL_DIR>/cec.lib
+    <INSTALL_DIR>/libcec-static.lib
   INSTALL_COMMAND cmake --install . --prefix ${CMAKE_BINARY_DIR}/vendor --config ${CMAKE_BUILD_TYPE}
-  CMAKE_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_BINARY_DIR}/vendor -DSKIP_PYTHON_WRAPPER:bool=true -DLIBCEC_VERSION_MAJOR:string=7 -DLIBCEC_VERSION_MINOR:string=1 -DLIBCEC_VERSION_PATCH:string=1
+  CMAKE_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_BINARY_DIR}/vendor -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSKIP_PYTHON_WRAPPER:bool=true -DLIBCEC_VERSION_MAJOR:string=7 -DLIBCEC_VERSION_MINOR:string=1 -DLIBCEC_VERSION_PATCH:string=1
 )
 
 # Create the executable
@@ -63,12 +65,18 @@ add_dependencies(BigPictureSwitch libcec)
 ExternalProject_Get_Property(libcec INSTALL_DIR)
 
 # 3) Create an IMPORTED target for the static library
-add_library(cec STATIC IMPORTED)
-set_target_properties(cec PROPERTIES
+add_library(libcec-static STATIC IMPORTED)
+set_target_properties(libcec-static PROPERTIES
   IMPORTED_LOCATION
-    "${INSTALL_DIR}/cec.lib"
+    "${INSTALL_DIR}/cec-static.lib"
 )
 
+# 3) Create an IMPORTED target for the static library
+add_library(p8-platform STATIC IMPORTED)
+set_target_properties(p8-platform PROPERTIES
+  IMPORTED_LOCATION
+    "${INSTALL_DIR}/lib/p8-platform.lib"
+)
 
 # Link Windows libraries
 target_link_libraries(BigPictureSwitch PRIVATE
@@ -88,7 +96,8 @@ target_link_libraries(BigPictureSwitch PRIVATE
     setupapi
     cfgmgr32
     shlwapi
-    cec
+    libcec-static
+    p8-platform
 )
 
 # Compiler definitions

@@ -27,7 +27,7 @@ jobs:
         submodules: recursive
       
     - name: Configure CMake
-      run: cmake -G "Visual Studio 17 2022" --preset ${{ matrix.arch }}-release
+      run: cmake -G "Ninja" --preset ${{ matrix.arch }}-release
       
     - name: Build
       run: cmake --build build/${{ matrix.arch }}-release --config Release

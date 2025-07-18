@@ -13,7 +13,11 @@
 #include <vector>
 #include <string>
 
+// Workaround to link libcec statically
+#define DECLSPEC
 #include "cec.h"
+#undef DECLSPEC
+
 
 
 #define MAX_LOADSTRING 100
@@ -504,6 +508,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     MSG msg;
+
+    // LibCEC test:
+
+    auto g_parser = CECInitialise(nullptr);
 
     // Main message loop:
     DebugLog(L"wWinMain: Entering main message loop");
