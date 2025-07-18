@@ -3,4 +3,4 @@
 	url = git@github.com:InBetweenNames/libcec.git
 [submodule "platform"]
 	path = platform
-	url = git@github.com:Pulse-Eight/platform.git
+	url = git@github.com:InBetweenNames/platform.git
