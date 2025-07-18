@@ -27,12 +27,10 @@ jobs:
         submodules: recursive
 
     # 1) Bootstrap the VS 2022 developer environment so that cl.exe is on PATH
-    - name: Initialize Visual Studio environment
-      shell: cmd
-      run: > 
-        call "%ProgramFiles(x86)%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"
-        -arch=${{ matrix.arch }
-      
+    - uses: TheMrMilchmann/setup-msvc-dev@v3
+      with:
+       arch: ${{ matrix.arch }}
+
     - name: Configure CMake
       run: cmake --preset ${{ matrix.arch }}-release
       
