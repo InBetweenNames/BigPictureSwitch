@@ -25,12 +25,12 @@ ExternalProject_Add(platform
 set(CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/vendor" ${CMAKE_PREFIX_PATH})
 
 ExternalProject_Add(libcec
-  SOURCE_DIR    ${CMAKE_SOURCE_DIR}/libcec/src/libcec
+  SOURCE_DIR    ${CMAKE_SOURCE_DIR}/libcec
   BINARY_DIR    ${CMAKE_BINARY_DIR}/libcec-build
   INSTALL_DIR   ${CMAKE_BINARY_DIR}/vendor
   DEPENDS       platform
   BUILD_BYPRODUCTS
-    <INSTALL_DIR>/libcec-static.lib
+    <INSTALL_DIR>/cec-static.lib
   INSTALL_COMMAND cmake --install . --prefix ${CMAKE_BINARY_DIR}/vendor --config ${CMAKE_BUILD_TYPE}
   CMAKE_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_BINARY_DIR}/vendor -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSKIP_PYTHON_WRAPPER:bool=true -DLIBCEC_VERSION_MAJOR:string=7 -DLIBCEC_VERSION_MINOR:string=1 -DLIBCEC_VERSION_PATCH:string=1
 )
@@ -65,8 +65,8 @@ add_dependencies(BigPictureSwitch libcec)
 ExternalProject_Get_Property(libcec INSTALL_DIR)
 
 # 3) Create an IMPORTED target for the static library
-add_library(libcec-static STATIC IMPORTED)
-set_target_properties(libcec-static PROPERTIES
+add_library(cec-static STATIC IMPORTED)
+set_target_properties(cec-static PROPERTIES
   IMPORTED_LOCATION
     "${INSTALL_DIR}/cec-static.lib"
 )
@@ -96,7 +96,7 @@ target_link_libraries(BigPictureSwitch PRIVATE
     setupapi
     cfgmgr32
     shlwapi
-    libcec-static
+    cec-static
     p8-platform
 )
 
