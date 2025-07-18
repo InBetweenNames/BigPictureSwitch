@@ -13,6 +13,7 @@
 #include <vector>
 #include <string>
 
+#include "cec.h"
 
 
 #define MAX_LOADSTRING 100

@@ -1,3 +1,6 @@
 [submodule "libcec"]
 	path = libcec
-	url = git@github.com:Pulse-Eight/libcec.git
+	url = git@github.com:InBetweenNames/libcec.git
+[submodule "platform"]
+	path = platform
+	url = git@github.com:Pulse-Eight/platform.git

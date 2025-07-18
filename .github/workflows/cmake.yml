@@ -23,6 +23,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
       
     - name: Configure CMake
       run: cmake -G "Visual Studio 17 2022" --preset ${{ matrix.arch }}-release
@@ -46,6 +48,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        submodules: recursive
     
     - name: Download all artifacts
       uses: actions/download-artifact@v4
