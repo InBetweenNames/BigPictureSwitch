@@ -19,7 +19,13 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        arch: [x64, x86, arm64]
+        include:
+          - arch: x64
+            msvc_arch: x64
+          - arch: x86
+            msvc_arch: x86
+          - arch: arm64
+            msvc_arch: amd64_arm64
     
     steps:
     - uses: actions/checkout@v4
@@ -29,7 +35,7 @@ jobs:
     # 1) Bootstrap the VS 2022 developer environment so that cl.exe is on PATH
     - uses: TheMrMilchmann/setup-msvc-dev@v3
       with:
-       arch: ${{ (matrix.arch == 'arm64') && 'amd64_arm64' || matrix.arch }}
+       arch: ${{ matrix.msvc_arch }}
 
     - name: Configure CMake
       run: cmake --preset ${{ matrix.arch }}-release
