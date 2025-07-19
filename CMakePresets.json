@@ -4,7 +4,7 @@
     {
       "name": "windows-base",
       "hidden": true,
-      "generator": "Ninja",
+      "generator": "Ninja Multi-Config",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "condition": {
         "type": "equals",
@@ -13,8 +13,7 @@
       }
     },
     {
-      "name": "x64-debug",
-      "displayName": "x64 Debug",
+      "name": "x64",
       "inherits": "windows-base",
       "architecture": {
         "value": "x64",
@@ -25,20 +24,7 @@
       }
     },
     {
-      "name": "x64-release",
-      "displayName": "x64 Release",
-      "inherits": "windows-base",
-      "architecture": {
-        "value": "x64",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
-    },
-    {
-      "name": "x86-debug",
-      "displayName": "x86 Debug",
+      "name": "x86",
       "inherits": "windows-base",
       "architecture": {
         "value": "x86",
@@ -49,32 +35,7 @@
       }
     },
     {
-      "name": "x86-release",
-      "displayName": "x86 Release",
-      "inherits": "windows-base",
-      "architecture": {
-        "value": "x86",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
-    },
-    {
-      "name": "arm64-debug",
-      "displayName": "ARM64 Debug",
-      "inherits": "windows-base",
-      "architecture": {
-        "value": "arm64",
-        "strategy": "external"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
-      }
-    },
-    {
-      "name": "arm64-release",
-      "displayName": "ARM64 Release",
+      "name": "arm64",
       "inherits": "windows-base",
       "architecture": {
         "value": "arm64",
@@ -89,37 +50,37 @@
     {
       "name": "x64-debug",
       "displayName": "x64 Debug",
-      "configurePreset": "x64-debug",
+      "configurePreset": "x64",
       "configuration": "Debug"
     },
     {
       "name": "x64-release",
       "displayName": "x64 Release",
-      "configurePreset": "x64-release",
+      "configurePreset": "x64",
       "configuration": "Release"
     },
     {
       "name": "x86-debug",
       "displayName": "x86 Debug",
-      "configurePreset": "x86-debug",
+      "configurePreset": "x86",
       "configuration": "Debug"
     },
     {
       "name": "x86-release",
       "displayName": "x86 Release",
-      "configurePreset": "x86-release",
+      "configurePreset": "x86",
       "configuration": "Release"
     },
     {
       "name": "arm64-debug",
       "displayName": "arm64 Debug",
-      "configurePreset": "arm64-debug",
+      "configurePreset": "arm64",
       "configuration": "Debug"
     },
     {
       "name": "arm64-release",
       "displayName": "arm64 Release",
-      "configurePreset": "arm64-release",
+      "configurePreset": "arm64",
       "configuration": "Release"
     }
   ]

@@ -38,18 +38,18 @@ jobs:
        arch: ${{ matrix.msvc_arch }}
 
     - name: Configure CMake
-      run: cmake --preset ${{ matrix.arch }}-release
+      run: cmake --preset ${{ matrix.arch }}
       
     - name: Build
-      run: cmake --build build/${{ matrix.arch }}-release
+      run: cmake --build build/${{ matrix.arch }} --config ${{ env.BUILD_TYPE }}
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: BigPictureSwitch-${{ matrix.arch }}-${{ github.sha }}
         path: |
-          build/${{ matrix.arch }}-release/BigPictureSwitch.exe
-          build/${{ matrix.arch }}-release/BigPictureSwitch.pdb
+          build/${{ matrix.arch }}/Release/BigPictureSwitch.exe
+          build/${{ matrix.arch }}/Release/BigPictureSwitch.pdb
         retention-days: 30
 
   release:

@@ -49,13 +49,9 @@ ExternalProject_Add(libcec
 # Create the executable
 add_executable(BigPictureSwitch WIN32
     BigPictureSwitch.cpp
-    BigPictureSwitch.h
-    framework.h
-    resource.h
-    targetver.h
+    BigPictureSwitchCEC.cpp
     BigPictureSwitch.rc
-    icon.ico
-)
+    icon.ico)
 
 target_compile_features(BigPictureSwitch PRIVATE cxx_std_20)
 
@@ -67,7 +63,7 @@ set_target_properties(BigPictureSwitch PROPERTIES
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS ON
     INTERPROCEDURAL_OPTIMIZATION TRUE
-    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/libcec/include;${CMAKE_BINARY_DIR}/vendor/include"
+    INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR};${CMAKE_SOURCE_DIR}/libcec/include;${CMAKE_BINARY_DIR}/vendor/include"
 )
 
 add_dependencies(BigPictureSwitch libcec)
