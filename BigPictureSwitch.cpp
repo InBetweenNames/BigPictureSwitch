@@ -12,11 +12,12 @@
 #include <algorithm>
 #include <vector>
 #include <string>
+#include <memory>
 
-// Workaround to link libcec statically
-#define DECLSPEC
-#include "cec.h"
-#undef DECLSPEC
+
+#include "BigPictureSwitchAudio.h"
+#include "BigPictureSwitchDisplay.h"
+#include "BigPictureSwitchCEC.h"
 
 
 
@@ -37,92 +38,6 @@
 #define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH L"SelectedDisplayDeviceTargetAdapterPath"
 #define SELECTED_DISPLAY_EXCLUDE L"SelectedDisplayExcludeFromDesktop"
 
-// Undocumented interface for setting default audio device
-interface DECLSPEC_UUID("f8679f50-850a-41cf-9c72-430f290290c8") IPolicyConfig;
-class DECLSPEC_UUID("870af99c-171d-4f9e-af0d-e63df40c2bc9") CPolicyConfigClient;
-
-// ----------------------------------------------------------------------------
-// class CPolicyConfigClient
-// {870af99c-171d-4f9e-af0d-e63df40c2bc9}
-//
-// interface IPolicyConfig
-// {f8679f50-850a-41cf-9c72-430f290290c8}
-//
-// Query interface:
-// CComPtr<IPolicyConfig> PolicyConfig;
-// PolicyConfig.CoCreateInstance(__uuidof(CPolicyConfigClient));
-//
-// @compatible: Windows 7 and Later
-// ----------------------------------------------------------------------------
-interface IPolicyConfig : public IUnknown
-{
-public:
-
-        virtual HRESULT GetMixFormat(
-                PCWSTR,
-                WAVEFORMATEX**
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE GetDeviceFormat(
-                PCWSTR,
-                INT,
-                WAVEFORMATEX**
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE ResetDeviceFormat(
-                PCWSTR
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetDeviceFormat(
-                PCWSTR,
-                WAVEFORMATEX*,
-                WAVEFORMATEX*
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE GetProcessingPeriod(
-                PCWSTR,
-                INT,
-                PINT64,
-                PINT64
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetProcessingPeriod(
-                PCWSTR,
-                PINT64
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE GetShareMode(
-                PCWSTR,
-                struct DeviceShareMode*
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetShareMode(
-                PCWSTR,
-                struct DeviceShareMode*
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE GetPropertyValue(
-                PCWSTR,
-                const PROPERTYKEY&,
-                PROPVARIANT*
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetPropertyValue(
-                PCWSTR,
-                const PROPERTYKEY&,
-                PROPVARIANT*
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetDefaultEndpoint(
-                __in PCWSTR wszDeviceId,
-                __in ERole eRole
-        );
-
-        virtual HRESULT STDMETHODCALLTYPE SetEndpointVisibility(
-                PCWSTR,
-                INT
-        );
-};
 
 // Simple debug logging function
 void DebugLog(const wchar_t* format, ...)
@@ -139,151 +54,7 @@ void DebugLog(const wchar_t* format, ...)
 #endif
 }
 
-// Alternative macro for easier usage
-#ifdef _DEBUG
-#define DEBUG_LOG(fmt, ...) DebugLog(fmt, ##__VA_ARGS__)
-#else
-#define DEBUG_LOG(fmt, ...)
-#endif
 
-
-// Panic macro to log an error and exit the application
-#define PANIC(msg, ...) do { \
-    wchar_t buffer[512]; \
-    swprintf_s(buffer, L"PANIC: " msg L" at %S:%d", ##__VA_ARGS__, __FILE__, __LINE__); \
-    FatalAppExit(0, buffer); \
-} while(0)
-
-
-struct AudioDevice
-{
-    std::wstring id;
-    std::wstring name;
-};
-
-struct DisplayConfiguration
-{
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-};
-
-struct AdapterPair
-{
-    LUID adapterId;
-    UINT32 id;
-
-    AdapterPair() = default;
-
-    AdapterPair(const DISPLAYCONFIG_PATH_TARGET_INFO& target) : adapterId(target.adapterId), id(target.id)
-    {
-    }
-
-    bool operator==(const AdapterPair& other) const
-    {
-        return adapterId.LowPart == other.adapterId.LowPart &&
-            adapterId.HighPart == other.adapterId.HighPart &&
-            id == other.id;
-    }
-};
-
-template<>
-struct std::hash<AdapterPair>
-{
-    std::size_t operator()(const AdapterPair& s) const noexcept
-    {
-        std::size_t h1 = std::hash<DWORD>{}(s.adapterId.LowPart);
-        std::size_t h2 = std::hash<LONG>{}(s.adapterId.HighPart);
-        std::size_t h3 = std::hash<UINT32>{}(s.id);
-
-        return h1 ^ (h2 << 1) ^ (h3 << 2);
-    }
-};
-
-enum struct DisplayTargetExStatus
-{
-    Inactive,
-    Active,
-    Primary,
-    NotPresent
-};;
-
-template<>
-struct std::formatter<DisplayTargetExStatus, wchar_t> {
-    // Parse format specifiers (we ignore any here).
-    constexpr auto parse(wformat_parse_context& ctx) {
-        return ctx.begin();
-    }
-
-    template <typename FormatContext>
-    auto format(const DisplayTargetExStatus& p, FormatContext& ctx) const {
-        // ctx.out() is an iterator to the output buffer
-
-        switch (p)
-        {
-            default:
-            case DisplayTargetExStatus::Inactive:
-                return std::format_to(
-                    ctx.out(),
-                    L""
-                );
-            case DisplayTargetExStatus::Active:
-                return std::format_to(
-                    ctx.out(),
-                    L"[Active]"
-                );
-            case DisplayTargetExStatus::Primary:
-                return std::format_to(
-                    ctx.out(),
-                    L"[Primary]"
-                );
-            case DisplayTargetExStatus::NotPresent:
-                return std::format_to(
-                    ctx.out(),
-                    L"[Not Present]"
-                );
-        }
-
-    }
-};
-
-struct DisplayTargetEx
-{
-    AdapterPair id;
-    std::wstring monitorFriendlyName;
-    std::wstring adapterFriendlyName;
-
-    // Used for comparison
-    std::wstring monitorDevicePath;
-	std::wstring adapterDevicePath;
-
-};
-
-template<>
-struct std::formatter<DisplayTargetEx, wchar_t> {
-    // Parse format specifiers (we ignore any here).
-    constexpr auto parse(wformat_parse_context& ctx) {
-        return ctx.begin();
-    }
-
-    template <typename FormatContext>
-    auto format(const DisplayTargetEx& p, FormatContext& ctx) const {
-        // ctx.out() is an iterator to the output buffer
-        return std::format_to(
-            ctx.out(),
-            L"{} ({})", 
-			p.monitorFriendlyName.empty() ? L"Unknown Display" : p.monitorFriendlyName,
-			p.adapterFriendlyName.empty() ? L"Unknown Adapter" : p.adapterFriendlyName
-        );
-    }
-};
-
-bool operator==(const DisplayTargetEx& lhs, const DisplayTargetEx& rhs)
-{
-	// We don't care about comparing status.  We do care about expected names as this is a sign the configuration has changed.
-    return lhs.id == rhs.id
-        && rhs.monitorDevicePath == lhs.monitorDevicePath
-        && lhs.adapterDevicePath == rhs.adapterDevicePath;
-}
 
 
 // Forward declarations of functions included in this code module:
@@ -294,11 +65,6 @@ INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 BOOL                AddTrayIcon(HWND hWnd);
 BOOL                RemoveTrayIcon();
 void                ShowTrayMenu(HWND hWnd);
-void                InitializeAudio();
-void                CleanupAudio();
-HRESULT             GetCurrentAudioDevice(std::wstring& ppwszDeviceId, std::wstring& ppwszDeviceName);
-HRESULT             EnumerateAudioDevices(std::vector<AudioDevice>& devices);
-HRESULT             SetDefaultAudioDevice(LPCWSTR deviceId);
 BOOL                IsStartupEnabled();
 BOOL                SaveStartupEnabled();
 WCHAR* GetExecutablePath();
@@ -307,17 +73,8 @@ BOOL                InitializeWindowEventHook();
 void                CleanupWindowEventHook();
 BOOL                SaveSettingsToRegistry();
 BOOL                LoadSettingsFromRegistry();
-void                SetSelectedAudioDevice(LPCWSTR deviceId);
-LPCWSTR             GetSelectedAudioDevice();
 
-std::vector<std::wstring> GetDisplayNamesFromPaths(const std::vector<DISPLAYCONFIG_PATH_INFO>& paths);
-void                SetSelectedDisplayDevice(const DisplayTargetEx& path);
-std::optional<DisplayTargetEx> GetDisplayTargetExForPath(const DISPLAYCONFIG_PATH_INFO& path);
-std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const DisplayTargetEx& target, DisplayConfiguration& dc);
-DisplayConfiguration GetCurrentDisplayConfiguration();
-std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> EnumerateConnectedDisplayTargets();
-DisplayConfiguration QueryDisplayConfiguration(const UINT32 flags, DISPLAYCONFIG_TOPOLOGY_ID* currentTopology);
-void SetDesktopDisplayConfiguration(DisplayConfiguration& dc);
+
 
 
 // Global Variables:
@@ -326,98 +83,14 @@ WCHAR szTitle[MAX_LOADSTRING];                  // The title bar text
 WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 NOTIFYICONDATA nid = {};                        // System tray icon data
 HWND g_hWnd = nullptr;                          // Hidden window handle
-
-// Audio-related globals
-IMMDeviceEnumerator* g_pEnumerator = nullptr;
-bool g_bStartupEnabled = false; // Flag to indicate if the application is set to run at startup
-std::vector<AudioDevice> g_audioDevices; // Store enumerated audio devices
-std::optional<std::wstring> g_selectedAudioDeviceId = {}; // Store the user's selected audio device
-std::wstring g_origAudioDeviceId; // Store the main audio device name
-
-
-// GUID for the PolicyConfig interface
-IPolicyConfig* g_pPolicyConfig = nullptr; // Pointer to the PolicyConfig interface for setting default audio device
+bool g_bStartupEnabled = false;                 // Flag to indicate if the application is set to run at startup
 
 // Steam Big Picture Mode detection globals
 HWINEVENTHOOK g_hWinEventHook = nullptr;
 bool g_bSteamBigPictureModeRunning = false;
 bool g_bExcludeSelectedDisplayFromDesktop = false; // Flag to indicate if the selected display should be excluded from the desktop
-std::optional<DisplayConfiguration> g_origDisplayConfig;
-std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> g_displayTargets;
-std::optional<DisplayTargetEx> g_selectedDisplayTarget;
 
 
-std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
-{
-    // 1. Get a device info set for the DISPLAY class
-    HDEVINFO devs = SetupDiGetClassDevs(
-        &GUID_DEVCLASS_DISPLAY,
-        nullptr,
-        nullptr,
-        DIGCF_PRESENT
-    );
-    if (devs == INVALID_HANDLE_VALUE)
-        return L"";
-
-    SP_DEVINFO_DATA devInfo = {};
-	devInfo.cbSize = sizeof(SP_DEVINFO_DATA);
-    DWORD idx = 0;
-    std::wstring friendly;
-
-    // 2. Iterate all display devices
-    while (SetupDiEnumDeviceInfo(devs, idx++, &devInfo))
-    {
-        // 3. Match instance ID
-        WCHAR bufId[512];
-        if (CM_Get_Device_IDW(devInfo.DevInst, bufId, _countof(bufId), 0) == CR_SUCCESS &&
-            _wcsicmp(bufId, instanceId.c_str()) == 0)
-        {
-            // 4a. Try the new FriendlyName property
-            DEVPROPTYPE propType;
-            WCHAR bufName[512];
-            DWORD cbSize = 0;
-            BOOL status = SetupDiGetDevicePropertyW(
-                devs,
-                &devInfo,
-                &DEVPKEY_Device_FriendlyName,
-                &propType,
-                (BYTE*)bufName,
-                sizeof(bufName),
-                &cbSize,
-                0
-            );
-
-            if (status)
-            {
-                friendly = bufName;
-            }
-            else if (GetLastError() == ERROR_NOT_FOUND)
-            {
-                // If the property is not found, we can try to get the device description
-                // using the DEVPKEY_Device_DeviceDesc property.
-                status = SetupDiGetDevicePropertyW(
-                    devs,
-                    &devInfo,
-                    &DEVPKEY_Device_DeviceDesc,
-                    &propType,
-                    (BYTE*)bufName,
-                    sizeof(bufName),
-                    &cbSize,
-                    0
-                );
-                if (status)
-                {
-                    friendly = bufName;
-                }
-            }
-
-            break;
-        }
-    }
-
-    SetupDiDestroyDeviceInfoList(devs);
-    return friendly;
-}
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
@@ -508,10 +181,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     MSG msg;
-
-    // LibCEC test:
-
-    auto g_parser = CECInitialise(nullptr);
 
     // Main message loop:
     DebugLog(L"wWinMain: Entering main message loop");
@@ -801,6 +470,11 @@ void ShowTrayMenu(HWND hWnd)
         {
             startupFlags |= MF_CHECKED;
         }
+		AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Display control (HDMI CEC):");
+        //EnumerateConnectedCECDevices();
+        AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+
+
         AppendMenuW(hMenu, startupFlags, IDM_STARTUP, L"Run on Startup");
 
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -825,120 +499,6 @@ void ShowTrayMenu(HWND hWnd)
     }
 }
 
-//
-//  FUNCTION: InitializeAudio()
-//
-//  PURPOSE: Initializes the audio device enumerator for COM audio APIs
-//
-void InitializeAudio()
-{
-    DebugLog(L"InitializeAudio: Initializing audio enumerator");
-    HRESULT hr = CoCreateInstance(
-        __uuidof(MMDeviceEnumerator),
-        nullptr,
-        CLSCTX_ALL,
-        __uuidof(IMMDeviceEnumerator),
-        (void**)&g_pEnumerator);
-
-    if (FAILED(hr))
-    {
-        PANIC(L"InitializeAudio: CoCreateInstance for IMMDeviceEnumerator failed: 0x%08X", hr);
-    }
-
-    hr = CoCreateInstance(__uuidof(CPolicyConfigClient), NULL, CLSCTX_ALL, __uuidof(IPolicyConfig), (LPVOID*)&g_pPolicyConfig);
-
-    if (FAILED(hr))
-    {
-        PANIC(L"InitializeAudio: CoCreateInstance for IPolicyConfig failed: 0x%08X", hr);
-    }
-
-}
-
-//
-//  FUNCTION: CleanupAudio()
-//
-//  PURPOSE: Releases audio COM objects
-//
-void CleanupAudio()
-{
-    DebugLog(L"CleanupAudio: Cleaning up audio resources");
-
-    if (g_pEnumerator)
-    {
-        g_pEnumerator->Release();
-        g_pEnumerator = nullptr;
-    }
-
-    if (g_pPolicyConfig)
-    {
-        g_pPolicyConfig->Release();
-        g_pPolicyConfig = nullptr;
-    }
-}
-
-//
-//  FUNCTION: GetCurrentAudioDevice(LPWSTR*, LPWSTR*)
-//
-//  PURPOSE: Gets the current default audio playback device ID and friendly name
-//
-HRESULT GetCurrentAudioDevice(std::wstring& deviceId, std::wstring& deviceName)
-{
-    DebugLog(L"GetCurrentAudioDevice: Getting current audio device");
-    if (!g_pEnumerator)
-        return E_INVALIDARG;
-
-    LPWSTR ppwszDeviceId = nullptr;
-
-    IMMDevice* pDevice = nullptr;
-    IPropertyStore* pProps = nullptr;
-    PROPVARIANT varName;
-    PropVariantInit(&varName);
-    HRESULT hr = S_OK;
-
-    // Get default audio endpoint
-    hr = g_pEnumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &pDevice);
-    if (SUCCEEDED(hr))
-    {
-        // Get device ID
-        hr = pDevice->GetId(&ppwszDeviceId);
-        if (SUCCEEDED(hr))
-        {
-            if (ppwszDeviceId) {
-                deviceId = ppwszDeviceId;
-            }
-            // Get device friendly name
-            hr = pDevice->OpenPropertyStore(STGM_READ, &pProps);
-            if (SUCCEEDED(hr))
-            {
-                hr = pProps->GetValue(PKEY_Device_FriendlyName, &varName);
-                if (SUCCEEDED(hr))
-                {
-                    // Copy the friendly name
-                    deviceName = varName.pwszVal;
-                }
-            }
-        }
-    }
-
-    // Cleanup
-    PropVariantClear(&varName);
-    if (pProps)
-        pProps->Release();
-    if (pDevice)
-        pDevice->Release();
-
-    if (FAILED(hr))
-    {
-        if (ppwszDeviceId)
-        {
-            CoTaskMemFree(ppwszDeviceId);
-        }
-    }
-
-    DebugLog(L"GetCurrentAudioDevice: value='%s', deviceName='%s', hr=0x%08X", deviceId.c_str(), deviceName.c_str(), hr);
-    return hr;
-}
-
 // Message handler for about box.
 INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
@@ -957,96 +517,6 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
     return (INT_PTR)FALSE;
-}
-
-HRESULT EnumerateAudioDevices(std::vector<AudioDevice>& devices)
-{
-    DebugLog(L"EnumerateAudioDevices: Enumerating audio devices");
-    devices.clear();
-    if (!g_pEnumerator)
-        return E_FAIL;
-
-    IMMDeviceCollection* pCollection = nullptr;
-    // Include all device states, not just active ones
-    HRESULT hr = g_pEnumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE | DEVICE_STATE_DISABLED | DEVICE_STATE_NOTPRESENT | DEVICE_STATE_UNPLUGGED, &pCollection);
-
-    if (SUCCEEDED(hr))
-    {
-        UINT count;
-        hr = pCollection->GetCount(&count);
-        if (SUCCEEDED(hr))
-        {
-            for (UINT i = 0; i < count; i++)
-            {
-                IMMDevice* pDevice = nullptr;
-                hr = pCollection->Item(i, &pDevice);
-                if (SUCCEEDED(hr))
-                {
-                    LPWSTR pwszId = nullptr;
-                    hr = pDevice->GetId(&pwszId);
-                    if (SUCCEEDED(hr))
-                    {
-                        IPropertyStore* pProps = nullptr;
-                        hr = pDevice->OpenPropertyStore(STGM_READ, &pProps);
-                        if (SUCCEEDED(hr))
-                        {
-                            PROPVARIANT varName;
-                            PropVariantInit(&varName);
-                            hr = pProps->GetValue(PKEY_Device_FriendlyName, &varName);
-                            if (SUCCEEDED(hr))
-                            {
-                                std::wstring deviceName = varName.pwszVal;
-
-                                // Get device state for display purposes
-                                DWORD deviceState;
-                                if (SUCCEEDED(pDevice->GetState(&deviceState)))
-                                {
-                                    // Add state indicator for inactive devices
-                                    if (deviceState != DEVICE_STATE_ACTIVE)
-                                    {
-                                        switch (deviceState)
-                                        {
-                                        case DEVICE_STATE_DISABLED:
-                                            deviceName += L" [Disabled]";
-                                            break;
-                                        case DEVICE_STATE_NOTPRESENT:
-                                            deviceName += L" [Not Present]";
-                                            break;
-                                        case DEVICE_STATE_UNPLUGGED:
-                                            deviceName += L" [Unplugged]";
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                devices.push_back({ pwszId, deviceName });
-                                DebugLog(L"Audio device added: %s", pwszId);
-                                PropVariantClear(&varName);
-                            }
-                            pProps->Release();
-                        }
-                        CoTaskMemFree(pwszId);
-                    }
-                    pDevice->Release();
-                }
-            }
-        }
-        pCollection->Release();
-    }
-
-    DebugLog(L"EnumerateAudioDevices: Found %d devices (including inactive)", (int)devices.size());
-    return hr;
-}
-
-
-HRESULT SetDefaultAudioDevice(LPCWSTR deviceId)
-{
-    DebugLog(L"SetDefaultAudioDevice: Setting default device to '%s'", deviceId);
-
-    HRESULT hr = g_pPolicyConfig->SetDefaultEndpoint(deviceId, eMultimedia);
-
-    DebugLog(L"SetDefaultAudioDevice: hr=0x%08X", hr);
-    return hr;
 }
 
 WCHAR* GetExecutablePath()
@@ -1101,35 +571,6 @@ BOOL SaveStartupEnabled()
     return (result == ERROR_SUCCESS);
 }
 
-LONG SetDisplayConfigWrapper(_In_ UINT32 numPathArrayElements,
-    _In_reads_opt_(numPathArrayElements) DISPLAYCONFIG_PATH_INFO* pathArray,
-    _In_ UINT32 numModeInfoArrayElements,
-    _In_reads_opt_(numModeInfoArrayElements) DISPLAYCONFIG_MODE_INFO* modeInfoArray,
-    _In_ UINT32 flags)
-{
-	LONG res = ERROR_GEN_FAILURE;
-	int attempts = 0;
-
-    do {
-
-        res = SetDisplayConfig(
-            numPathArrayElements, pathArray,
-            numModeInfoArrayElements, modeInfoArray,
-            flags
-        );
-
-        if (res != ERROR_SUCCESS)
-        {
-            DebugLog(L"SetDesktopDisplayConfiguration: SetDisplayConfig failed with error 0x%08X attempt %d", res, attempts);
-            Sleep(1000);
-
-        }
-
-        attempts++;
-    } while (res != ERROR_SUCCESS && attempts < 5);
-
-    return res;
-}
 
 void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
 {
@@ -1348,42 +789,7 @@ void CleanupWindowEventHook()
     }
 }
 
-void SetSelectedAudioDevice(LPCWSTR deviceId)
-{
-    DebugLog(L"SetSelectedAudioDevice: value='%s'", deviceId ? deviceId : L"(null)");
-    if (deviceId)
-    {
-        if (deviceId == g_selectedAudioDeviceId)
-        {
-            //unset the device if it's already selected
-            g_selectedAudioDeviceId.reset();
-        }
-        else {
-            g_selectedAudioDeviceId = deviceId;
-        }
-    }
-}
 
-void SetSelectedDisplayDevice(const DisplayTargetEx& target)
-{
-
-    /*AdapterPair selectedTarget = AdapterPair(device.target.targetInfo);
-
-	DebugLog(L"SetSelectedDisplayDevice: value='%s' (%ld.%u,%u)", device.monitorFriendlyName.c_str(), selectedTarget.adapterId.HighPart, selectedTarget.adapterId.LowPart, selectedTarget.id);*/
-
-    if (g_selectedDisplayTarget && target == *g_selectedDisplayTarget)
-    {
-		DebugLog(L"SetSelectedDisplayDevice: Display device already selected, unsetting");
-        g_selectedDisplayTarget.reset();
-    }
-    else {
-		DebugLog(L"SetSelectedDisplayDevice: Setting selected display device to '%s'", target.monitorFriendlyName.c_str());
-
-        g_selectedDisplayTarget = target;
-    }
-
-
-}
 
 
 BOOL SaveSettingsToRegistry()
@@ -1597,284 +1003,3 @@ BOOL LoadSettingsFromRegistry()
     return FALSE;
 }
 
-LPCWSTR GetSelectedAudioDevice()
-{
-    return g_selectedAudioDeviceId.has_value() ? g_selectedAudioDeviceId->c_str() : nullptr;
-}
-
-DisplayConfiguration QueryDisplayConfiguration(const UINT32 flags, DISPLAYCONFIG_TOPOLOGY_ID* currentTopology)
-{
-    LONG result = ERROR_SUCCESS;
-
-	DisplayConfiguration displayConfig;
-
-    do
-    {
-        // Determine how many target and mode structures to allocate
-        UINT32 pathCount, modeCount;
-        result = GetDisplayConfigBufferSizes(flags, &pathCount, &modeCount);
-
-        if (result != ERROR_SUCCESS)
-        {
-			PANIC(L"QueryActiveDisplayConfiguration: GetDisplayConfigBufferSizes failed with error 0x%08X", result);
-        }
-
-        // Allocate the target and mode arrays
-        displayConfig.paths.resize(pathCount);
-        displayConfig.modes.resize(modeCount);
-
-        // Get all active paths and their modes
-        result = QueryDisplayConfig(flags, &pathCount, displayConfig.paths.data(), &modeCount, displayConfig.modes.data(), currentTopology);
-
-        // The function may have returned fewer paths/modes than estimated
-        displayConfig.paths.resize(pathCount);
-        displayConfig.modes.resize(modeCount);
-
-        // It's possible that between the call to GetDisplayConfigBufferSizes and QueryDisplayConfig
-        // that the display state changed, so loop on the case of ERROR_INSUFFICIENT_BUFFER.
-    } while (result == ERROR_INSUFFICIENT_BUFFER);
-
-    if (result != ERROR_SUCCESS)
-    {
-		PANIC(L"QueryActiveDisplayConfiguration: QueryDisplayConfig failed with error 0x%08X", result);
-    }
-
-	return displayConfig;
-}
-
-DisplayConfiguration GetCurrentDisplayConfiguration()
-{
-    DebugLog(L"GetCurrentDisplayConfiguration: Getting current display configuration");
-
-    // Here, we want to ensure we capture the entire current display configuration, including virtual modes and refresh rates.
-    DISPLAYCONFIG_TOPOLOGY_ID currentTopology;
-
-    // NOTE: we use QDC_DISPLAY_CURRENT because Steam itself can mess around with the primary desktop.
-    // If we used QDC_ACTIVE_PATHS, and Steam switched the primary desktop to the other display, then we would very likely
-    // capture that configuration here (depending if this code runs first or if Steam's own SetDisplayConfig runs first).
-    // So to mitigate this, we just get the most current working configuration from the database itself.  Since Steam does not
-    // save its display configuration to the database, we're safe here.
-
-    auto ret = QueryDisplayConfiguration(QDC_DATABASE_CURRENT | QDC_VIRTUAL_MODE_AWARE | QDC_VIRTUAL_REFRESH_RATE_AWARE, &currentTopology);
-
-    DebugLog(L"GetCurrentDisplayConfiguration: currentTopology = %d", currentTopology);
-
-    return ret;
-
-}
-
-std::optional<DisplayTargetEx> GetDisplayTargetExForPath(const DISPLAYCONFIG_PATH_INFO& path)
-{
-
-
-    // Get the target display name
-    DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
-    targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-    targetName.header.size = sizeof(targetName);
-    targetName.header.adapterId = path.targetInfo.adapterId;
-    targetName.header.id = path.targetInfo.id;
-    LONG res = DisplayConfigGetDeviceInfo(&targetName.header);
-    if (res == ERROR_SUCCESS)
-    {
-
-        std::wstring const monitorFriendlyName = targetName.monitorFriendlyDeviceName;
-		std::wstring const monitorDevicePath = targetName.monitorDevicePath;
-		
-
-        // now get the adapter name too
-        DISPLAYCONFIG_ADAPTER_NAME adapterName = {};
-        adapterName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADAPTER_NAME;
-        adapterName.header.size = sizeof(adapterName);
-        adapterName.header.adapterId = path.targetInfo.adapterId;
-        res = DisplayConfigGetDeviceInfo(&adapterName.header);
-        if (res != ERROR_SUCCESS)
-        {
-            DebugLog(L"GetDisplayTargetExForPath: Could not get adapter name for display: %d", res);
-            return std::nullopt;
-        }
-
-        DebugLog(L"GetDisplayTargetExForPath: Adapter name: %s", adapterName.adapterDevicePath);
-
-        // e.g. "\\?\PCI#VEN_10DE&DEV_2684&SUBSYS_467519DA&REV_A1#4&...&0008#{...}"
-        std::wstring id(adapterName.adapterDevicePath);
-        std::wstring const adapterDevicePath = adapterName.adapterDevicePath;
-
-        // 1) strip the leading '\\?\'
-        if (id.find(L"\\\\?\\", 0) == 0)
-        {
-            id.erase(0, 4);
-        }
-
-        // 2) turn '#' into '\' so it becomes a proper instance-id
-        std::replace(id.begin(), id.end(), L'#', L'\\');
-
-        // 3) remove the trailing "\{…}" class‐GUID
-        if (auto pos = id.find(L"\\{"); pos != std::wstring::npos)
-            id.resize(pos);
-
-        std::wstring const adapterFriendlyName = GetFriendlyNameFromInstanceId(id);
-        DebugLog(L"GetDisplayTargetExForPath: Adapter friendly name: %s", adapterFriendlyName.c_str());
-
-        DebugLog(L"GetDisplayTargetExForPath: Friendly name: %s", monitorFriendlyName.c_str());
-
-        return DisplayTargetEx(AdapterPair(path.targetInfo), monitorFriendlyName, adapterFriendlyName, monitorDevicePath, adapterDevicePath);
-    }
-    else {
-        DebugLog(L"GetDisplayTargetExForPath: Could not get friendly name of display: %d", res);
-		return std::nullopt; // If we can't get the friendly name, return nullopt
-    }
-
-}
-
-std::optional<DISPLAYCONFIG_PATH_INFO> FindPathToDisplay(const DisplayTargetEx& target, DisplayConfiguration& dc)
-{
-    // Find the path that matches the target display.
-
-	// Find the path that best matches the target display.
-
-	std::vector<DISPLAYCONFIG_PATH_INFO> candidatePaths;
-
-    for (const auto& path : dc.paths)
-    {
-
-        auto pathTargetEx = GetDisplayTargetExForPath(path);
-
-        if (pathTargetEx && *pathTargetEx == target)
-        {
-            DebugLog(L"FindPathToDisplay: Potential path found");
-			// Now test if this could actually be activated.
-
-
-            DISPLAYCONFIG_PATH_INFO testPath = path;
-            testPath.flags |= DISPLAYCONFIG_PATH_ACTIVE; // Set the active flag to test if it can be activated
-
-            // Use SDC_VALIDATE to check if this target can be activated
-            LONG res = SetDisplayConfig(1, &testPath, static_cast<UINT32>(dc.modes.size()), dc.modes.data(), SDC_VALIDATE | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES);
-
-            if (res == ERROR_SUCCESS)
-            {
-                DebugLog(L"FindPathToDisplay: Path (%ld.%u,%u) to (%ld.%u,%u) is activatable, using it", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
-                return testPath;
-            }
-
-		}
-    }
-    
-    return std::nullopt;
-}
-
-
-std::vector<std::pair<DisplayTargetEx,DisplayTargetExStatus>> EnumerateConnectedDisplayTargets()
-{
-    DebugLog(L"EnumerateConnectedDisplayTargets: Getting all connected displays");
-    // Query all display paths and modes (virtual mode NOT supported, virtual refresh rate IS)
-    auto dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
-
-    // Now, use SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED with setting the paths to active to filter all of the display paths for ones that could be activated.
-
-    std::unordered_set<AdapterPair> connectedDisplays;
-	std::vector<std::pair<DisplayTargetEx, DisplayTargetExStatus>> connectedTargets;
-
-    for (auto& path : dc.paths)
-    {
-        if (connectedDisplays.contains(AdapterPair{ path.targetInfo }))
-        {
-            DebugLog(L"EnumerateConnectedDisplayTargets: Skipping already processed target: (%ld.%u,%u)", path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
-            continue; // Skip if we've already processed this source
-        }
-
-        bool primary = false;
-        bool active = path.flags & DISPLAYCONFIG_PATH_ACTIVE;
-
-        // Check if the target is active
-        if (active)
-        {
-            DebugLog(L"EnumerateConnectedDisplayTargets: Found active display target: (%ld.%u,%u) to (%ld.%u,%u)", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
-            // This target is active, so we can consider it connected
-
-            auto position = dc.modes[path.sourceInfo.modeInfoIdx].sourceMode.position;
-            primary = position.x == 0 && position.y == 0;
-        }
-        else {
-            // Test if it COULD be active
-            DISPLAYCONFIG_PATH_INFO testPath = path;
-            testPath.flags |= DISPLAYCONFIG_PATH_ACTIVE; // Set the active flag to test if it can be activated
-
-            // Use SDC_VALIDATE to check if this target can be activated
-            LONG res = SetDisplayConfig(1, &testPath, 0, nullptr, SDC_VALIDATE | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE);
-
-            if (res == ERROR_SUCCESS)
-            {
-                DebugLog(L"EnumerateConnectedDisplayTargets: Path (%ld.%u,%u) to (%ld.%u,%u) inactive, but could be activated", path.sourceInfo.adapterId.HighPart, path.sourceInfo.adapterId.LowPart, path.sourceInfo.id, path.targetInfo.adapterId.HighPart, path.targetInfo.adapterId.LowPart, path.targetInfo.id);
-            }
-            else {
-				continue; // If it can't be activated, skip this path
-            }
-        }
-
-		DisplayTargetExStatus status = DisplayTargetExStatus::Inactive;
-        if (primary)
-        {
-            status = DisplayTargetExStatus::Primary;
-        }
-        else if (active)
-        {
-            status = DisplayTargetExStatus::Active;
-        }
-        
-
-
-		std::optional<DisplayTargetEx> displayTarget = GetDisplayTargetExForPath( path );
-
-        if (displayTarget)
-        {
-			connectedDisplays.insert(displayTarget->id); // Add to the set of connected display paths
-            connectedTargets.push_back(std::make_pair(*displayTarget, status));
-        }
-
-    }
-
-
-    for (const auto& target : connectedTargets)
-    {
-        DebugLog(L"EnumerateConnectedDisplayTargets: Connected display: (%ld.%u,%u) [%s]", target.first.id.adapterId.HighPart, target.first.id.adapterId.LowPart, target.first.id.id, target.first.monitorFriendlyName.c_str());
-    }
-
-    return connectedTargets;
-}
-
-
-std::vector<std::wstring> GetDisplayNamesFromPaths(const std::vector<DISPLAYCONFIG_PATH_INFO>& paths)
-{
-
-    std::vector<std::wstring> displayNames;
-
-    for (const auto& path : paths)
-    {
-
-        // Get the target display name
-        DISPLAYCONFIG_TARGET_DEVICE_NAME targetName = {};
-        targetName.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-        targetName.header.size = sizeof(targetName);
-        targetName.header.adapterId = path.targetInfo.adapterId;
-        targetName.header.id = path.targetInfo.id;
-        LONG res = DisplayConfigGetDeviceInfo(&targetName.header);
-        if (res == ERROR_SUCCESS)
-        {
-            displayNames.push_back(targetName.monitorFriendlyDeviceName);
-
-            // Check the status of the display too
-            if (path.targetInfo.statusFlags & DISPLAYCONFIG_PATH_ACTIVE)
-            {
-                displayNames.back() += L" [Active]";
-            }
-
-            DebugLog(L"GetConnectedDisplayNames: Found display: %s", displayNames.back().c_str());
-        }
-        else {
-            DebugLog(L"GetConnectedDisplayNames: Could not enumerate display: %d", res);
-        }
-        
-    }
-    return displayNames;
-}

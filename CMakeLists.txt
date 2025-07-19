@@ -51,7 +51,7 @@ add_executable(BigPictureSwitch WIN32
     BigPictureSwitch.cpp
     BigPictureSwitchCEC.cpp
     BigPictureSwitch.rc
-    icon.ico)
+    icon.ico "BigPictureSwitchAudio.cpp" "BigPictureSwitchAudio.h" "BigPictureSwitchDisplay.cpp" "BigPictureSwitchDisplay.h")
 
 target_compile_features(BigPictureSwitch PRIVATE cxx_std_20)
 
