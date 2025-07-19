@@ -14,25 +14,36 @@ endif()
 include(ExternalProject)
 ExternalProject_Add(platform
   SOURCE_DIR    ${CMAKE_SOURCE_DIR}/platform
-  BINARY_DIR    ${CMAKE_BINARY_DIR}/platform-build
-  INSTALL_DIR   ${CMAKE_BINARY_DIR}/vendor
+  #BINARY_DIR    ${CMAKE_CURRENT_BINARY_DIR}/platform-build
+  #INSTALL_DIR   ${CMAKE_CURRENT_BINARY_DIR}/vendor
   BUILD_BYPRODUCTS
     <INSTALL_DIR>/lib/p8-platform.lib
-  INSTALL_COMMAND cmake --install . --prefix ${CMAKE_BINARY_DIR}/vendor --config ${CMAKE_BUILD_TYPE}
-  CMAKE_ARGS    -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR}/vendor -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+  BUILD_COMMAND
+    ${CMAKE_COMMAND}
+      --build <BINARY_DIR>
+      --config $<CONFIG>       # Debug, Release, RelWithDebInfo, etc.
+  INSTALL_COMMAND     ${CMAKE_COMMAND} --install <BINARY_DIR> --config $<CONFIG>
+  CMAKE_ARGS    -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR> -DCMAKE_BUILD_TYPE=$<CONFIG>
 )
 
-set(CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/vendor" ${CMAKE_PREFIX_PATH})
+# 2) Grab where platform ended up installing
+ExternalProject_Get_Property(platform INSTALL_DIR)
+
+list (APPEND CMAKE_PREFIX_PATH "${INSTALL_DIR}")
 
 ExternalProject_Add(libcec
   SOURCE_DIR    ${CMAKE_SOURCE_DIR}/libcec
-  BINARY_DIR    ${CMAKE_BINARY_DIR}/libcec-build
-  INSTALL_DIR   ${CMAKE_BINARY_DIR}/vendor
+  #BINARY_DIR    ${CMAKE_CURRENT_BINARY_DIR}/libcec-build
+  #INSTALL_DIR   ${CMAKE_CURRENT_BINARY_DIR}/vendor
   DEPENDS       platform
+  BUILD_COMMAND
+    ${CMAKE_COMMAND}
+      --build <BINARY_DIR>
+      --config $<CONFIG>       # Debug, Release, RelWithDebInfo, etc.
   BUILD_BYPRODUCTS
     <INSTALL_DIR>/cec-static.lib
-  INSTALL_COMMAND cmake --install . --prefix ${CMAKE_BINARY_DIR}/vendor --config ${CMAKE_BUILD_TYPE}
-  CMAKE_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_BINARY_DIR}/vendor -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DSKIP_PYTHON_WRAPPER:bool=true -DLIBCEC_VERSION_MAJOR:string=7 -DLIBCEC_VERSION_MINOR:string=1 -DLIBCEC_VERSION_PATCH:string=1
+  INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR> --config $<CONFIG>
+  CMAKE_ARGS -DCMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH} -DCMAKE_INSTALL_PREFIX=<INSTALL_DIR>  -DCMAKE_BUILD_TYPE=$<CONFIG> -DSKIP_PYTHON_WRAPPER:bool=true -DLIBCEC_VERSION_MAJOR:string=7 -DLIBCEC_VERSION_MINOR:string=1 -DLIBCEC_VERSION_PATCH:string=1
 )
 
 # Create the executable
@@ -70,6 +81,9 @@ set_target_properties(cec-static PROPERTIES
   IMPORTED_LOCATION
     "${INSTALL_DIR}/cec-static.lib"
 )
+
+# 2) Grab where platform ended up installing
+ExternalProject_Get_Property(platform INSTALL_DIR)
 
 # 3) Create an IMPORTED target for the static library
 add_library(p8-platform STATIC IMPORTED)
