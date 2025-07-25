@@ -97,6 +97,7 @@ target_link_libraries(BigPictureSwitch PRIVATE
     gdi32
     winspool
     comdlg32
+    comctl32
     advapi32
     shell32
     uuid

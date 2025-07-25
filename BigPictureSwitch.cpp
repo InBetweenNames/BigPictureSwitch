@@ -23,6 +23,7 @@
 
 #define MAX_LOADSTRING 100
 #define WM_TRAYICON (WM_USER + 1)
+#define WM_USER_DIALOG_CLOSED  (WM_USER + 2)
 
 // Registry target for Windows startup
 #define STARTUP_REGISTRY_PATH L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -37,6 +38,8 @@
 #define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_FRIENDLY_NAME L"SelectedDisplayDeviceTargetAdapterFriendlyName"
 #define SELECTED_DISPLAY_DEVICE_TARGET_ADAPTER_PATH L"SelectedDisplayDeviceTargetAdapterPath"
 #define SELECTED_DISPLAY_EXCLUDE L"SelectedDisplayExcludeFromDesktop"
+#define SELECTED_HDMI_CEC_ADDRESS L"SelectedHDMICECAddress"
+#define HDMI_CEC_ENABLED L"HDMICECEnabled"
 
 
 // Simple debug logging function
@@ -61,7 +64,6 @@ void DebugLog(const wchar_t* format, ...)
 ATOM                RegisterWindow(HINSTANCE hInstance);
 BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 BOOL                AddTrayIcon(HWND hWnd);
 BOOL                RemoveTrayIcon();
 void                ShowTrayMenu(HWND hWnd);
@@ -84,12 +86,16 @@ WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 NOTIFYICONDATA nid = {};                        // System tray icon data
 HWND g_hWnd = nullptr;                          // Hidden window handle
 bool g_bStartupEnabled = false;                 // Flag to indicate if the application is set to run at startup
+HWND g_hDlgHDMI = nullptr;                     // Handle to the HDMI address dialog
 
 // Steam Big Picture Mode detection globals
 HWINEVENTHOOK g_hWinEventHook = nullptr;
 bool g_bSteamBigPictureModeRunning = false;
 bool g_bExcludeSelectedDisplayFromDesktop = false; // Flag to indicate if the selected display should be excluded from the desktop
 
+std::optional<uint16_t> g_savedHDMICECaddress; // Selected HDMI CEC address
+std::optional<BigPictureSwitchCEC> g_bigPictureSwitchCEC; // CEC instance
+bool g_switchCEC = false;
 
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -180,14 +186,31 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         PANIC(L"wWinMain: InitializeWindowEventHook failed");
     }
 
+	// Initialize libcec with saved HDMI CEC address (if present)
+    try {
+        g_bigPictureSwitchCEC.emplace(g_savedHDMICECaddress);
+    }
+    catch (const std::runtime_error& e) {
+        DebugLog(L"wWinMain: Failed to initialize libCEC: %S", e.what());
+		g_bigPictureSwitchCEC.reset();
+	}
+
+    // Load common controls
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_INTERNET_CLASSES };
+    InitCommonControlsEx(&icc);
+
     MSG msg;
 
     // Main message loop:
     DebugLog(L"wWinMain: Entering main message loop");
-    while (GetMessage(&msg, nullptr, 0, 0))
+    while (GetMessageW(&msg, nullptr, 0, 0))
     {
+        // If it’s for the modeless dialog, let it handle accelerators, tabbing, etc.
+        if (g_hDlgHDMI != NULL && IsDialogMessageW(g_hDlgHDMI, &msg)) {
+            continue;  // dialog took it
+        }
         TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        DispatchMessageW(&msg);
     }
 
     // Cleanup
@@ -262,6 +285,100 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
     return TRUE;
 }
 
+INT_PTR CALLBACK InputDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg) {
+    case WM_INITDIALOG:
+
+		// Get the current HDMI CEC address from settings
+        if (g_bigPictureSwitchCEC)
+        {
+            uint16_t physAddr = g_bigPictureSwitchCEC->PortInfo().physAddr;
+            // Split the physical address into four octets
+            BYTE b0 = (physAddr >> 12) & 0x0F;
+            BYTE b1 = (physAddr >> 8) & 0x0F;
+            BYTE b2 = (physAddr >> 4) & 0x0F;
+            BYTE b3 = physAddr & 0x0F;
+            DebugLog(L"InputDlgProc: Current HDMI CEC address %d.%d.%d.%d", b0, b1, b2, b3);
+            // Set the initial value in the dialog
+            SendDlgItemMessageW(hwnd, IDC_HDMIADDRESS,
+                IPM_SETADDRESS,
+                0,
+                MAKEIPADDRESS(b0, b1, b2, b3));
+        }
+        else {
+            DebugLog(L"InputDlgProc: No CEC instance available -- should never happen");
+
+			// Disable the address input control
+
+			EnableWindow(GetDlgItem(hwnd, IDC_HDMIADDRESS), FALSE);
+
+            SendDlgItemMessageW(hwnd, IDC_HDMIADDRESS,
+                IPM_SETADDRESS,
+                0,
+                MAKEIPADDRESS(1, 2, 3, 4));
+        }
+
+
+        // Optionally restrict each octet to 0–255
+        SendDlgItemMessageW(hwnd, IDC_HDMIADDRESS,
+            IPM_SETRANGE,
+            0,
+            MAKEIPRANGE(1, 15));
+        for (int i = 1; i < 4; i++) {
+            SendDlgItemMessageW(hwnd, IDC_HDMIADDRESS,
+                IPM_SETRANGE,
+                i,
+                MAKEIPRANGE(0, 15));
+        }
+        return TRUE;    // let Windows set the focus
+
+    case WM_COMMAND:
+    {
+        WORD id = LOWORD(wParam);
+        WORD code = HIWORD(wParam);
+        if (id == IDOK && code == BN_CLICKED) {
+            // read back the address
+            DWORD dwAddr = 0;
+            int filled = SendDlgItemMessageW(hwnd,
+                IDC_HDMIADDRESS,
+                IPM_GETADDRESS, 0,
+                (LPARAM)&dwAddr);
+            BYTE b0 = FIRST_IPADDRESS(dwAddr);
+            BYTE b1 = SECOND_IPADDRESS(dwAddr);
+            BYTE b2 = THIRD_IPADDRESS(dwAddr);
+            BYTE b3 = FOURTH_IPADDRESS(dwAddr);
+
+            DebugLog(L"User entered HDMI address %d.%d.%d.%d",
+                b0, b1, b2, b3);
+
+            if (g_bigPictureSwitchCEC)
+            {
+				uint16_t physAddr = (b0 << 12) | (b1 << 8) | (b2 << 4) | b3;
+                g_bigPictureSwitchCEC->SetPhysicalAddress(physAddr);
+
+				DebugLog(L"User entered HDMI address %x", physAddr);
+
+            }
+
+            // modeless: destroy rather than EndDialog
+            DestroyWindow(hwnd);
+            return TRUE;
+        }
+        else if (id == IDCANCEL && code == BN_CLICKED) {
+            DestroyWindow(hwnd);
+            return TRUE;
+        }
+        break;
+    }
+    case WM_DESTROY:
+        // If you need to null‑out your hDlg handle:
+        PostMessageW(GetParent(hwnd), WM_USER_DIALOG_CLOSED, 0, 0);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 //
 //  FUNCTION: WndProc(HWND, UINT, WPARAM, LPARAM)
 //
@@ -300,6 +417,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
 			// Handle the disconnected display target case -- simply remove the selected display target
 			g_selectedDisplayTarget.reset();
+            SaveSettingsToRegistry();
             return 0;
 		}
 
@@ -326,6 +444,40 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             auto dc = GetCurrentDisplayConfiguration();
             SetDesktopDisplayConfiguration(dc);
             SaveSettingsToRegistry();
+            break;
+		}
+        case IDM_CEC_ADAPTER:
+        {
+			g_switchCEC = !g_switchCEC;
+			SaveSettingsToRegistry();
+            break;
+        }
+        case IDM_CEC_ADAPTER_PORT:
+        {
+            // Handle CEC adapter port selection
+            if (g_bigPictureSwitchCEC && !g_hDlgHDMI)
+            {
+                g_hDlgHDMI = CreateDialogParamW(
+                    hInst,
+                    MAKEINTRESOURCE(IDD_PROPPAGE_HDMI),
+                    hWnd,
+                    InputDlgProc,
+                    0);
+
+                if (g_hDlgHDMI) {
+                    ShowWindow(g_hDlgHDMI, SW_SHOW);
+                };
+
+            }
+            break;
+		}
+        case IDM_CEC_TURN_OFF:
+        {
+            // Try to turn off the TV
+            if (g_bigPictureSwitchCEC)
+            {
+                g_bigPictureSwitchCEC->TurnOff();
+            }
             break;
 		}
         case IDM_STARTUP:
@@ -359,8 +511,13 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         RemoveTrayIcon();
         PostQuitMessage(0);
         break;
+    case WM_USER_DIALOG_CLOSED:
+		g_hDlgHDMI  = nullptr; // Clear the dialog handle when it closes
+		// Save the HDMI CEC address
+        SaveSettingsToRegistry();
+        break;
     default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
+        return DefWindowProcW(hWnd, message, wParam, lParam);
     }
     return 0;
 }
@@ -470,8 +627,25 @@ void ShowTrayMenu(HWND hWnd)
         {
             startupFlags |= MF_CHECKED;
         }
-		AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Display control (HDMI CEC):");
-        //EnumerateConnectedCECDevices();
+		AppendMenuW(hMenu, MF_STRING | MF_GRAYED, 0, L"Display control (libCEC):");
+
+        if (g_bigPictureSwitchCEC)
+        {
+            DWORD adapterFlags = MF_STRING;
+            if (g_switchCEC)
+            {
+                adapterFlags |= MF_CHECKED; // Checkmark for the selected adapter
+            }
+
+            AppendMenuW(hMenu, adapterFlags, IDM_CEC_ADAPTER, g_bigPictureSwitchCEC->ToWString().c_str());
+
+			auto portInfo = g_bigPictureSwitchCEC->PortInfo();
+			AppendMenuW(hMenu, MF_STRING, IDM_CEC_ADAPTER_PORT, std::format(L"{}", portInfo).c_str());
+
+            AppendMenuW(hMenu, MF_STRING, IDM_CEC_TURN_OFF, L"Manual control: Turn off TV");
+        }
+
+
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
 
@@ -497,26 +671,6 @@ void ShowTrayMenu(HWND hWnd)
         // Destroy the menu once it's no longer needed
         DestroyMenu(hMenu);
     }
-}
-
-// Message handler for about box.
-INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    UNREFERENCED_PARAMETER(lParam);
-    switch (message)
-    {
-    case WM_INITDIALOG:
-        return (INT_PTR)TRUE;
-
-    case WM_COMMAND:
-        if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
-        {
-            EndDialog(hDlg, LOWORD(wParam));
-            return (INT_PTR)TRUE;
-        }
-        break;
-    }
-    return (INT_PTR)FALSE;
 }
 
 WCHAR* GetExecutablePath()
@@ -577,6 +731,20 @@ void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
     if (!g_bSteamBigPictureModeRunning)
     {
         DebugLog(L"Entering Steam Big Picture Mode");
+
+        if (g_switchCEC)
+        {
+           if (g_bigPictureSwitchCEC)
+            {
+                // Switch to the selected CEC adapter
+                g_bigPictureSwitchCEC->WakeAndSwitch();
+                DebugLog(L"EnterBigPictureMode: Switched to CEC adapter: %s", g_bigPictureSwitchCEC->ToWString().c_str());
+            }
+            else
+            {
+                DebugLog(L"EnterBigPictureMode: CEC switching is disabled or not initialized");
+		   }
+        }
 
         if (g_selectedDisplayTarget)
         {
@@ -702,6 +870,18 @@ void ExitBigPictureMode()
             DebugLog(L"ExitBigPictureMode: Restored audio to '%s'", g_origAudioDeviceId.c_str());
             g_origAudioDeviceId.clear();
         }
+
+        // Turn off TV if applicable
+        if (g_bigPictureSwitchCEC && g_switchCEC)
+        {
+            try {
+                g_bigPictureSwitchCEC->StandbyAndSwitch();
+                DebugLog(L"ExitBigPictureMode: Turned off TV using CEC");
+            }
+            catch (const std::runtime_error& e) {
+                DebugLog(L"ExitBigPictureMode: Failed to turn off TV using CEC: %S", e.what());
+            }
+		}
         
 
         g_bSteamBigPictureModeRunning = false;
@@ -865,6 +1045,33 @@ BOOL SaveSettingsToRegistry()
     result = RegSetValueExW(hKey, SELECTED_DISPLAY_EXCLUDE, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&exclude), sizeof(exclude));
     DebugLog(L"SaveSettingsToRegistry: SELECTED_DISPLAY_EXCLUDE result=%d", (result == ERROR_SUCCESS));
 
+    if (g_switchCEC)
+    {
+        DWORD dwSize = sizeof(DWORD);
+        DWORD dwSwitchCEC = g_switchCEC ? 1 : 0;
+
+        result = RegSetValueExW(hKey, HDMI_CEC_ENABLED, 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&dwSwitchCEC), dwSize);
+
+        DebugLog(L"SaveSettingsToRegistry: HDMI_CEC_ENABLED result=%d, enabled=0x%08X", (result == ERROR_SUCCESS), dwSwitchCEC);
+    }
+    else {
+		result = RegDeleteValueW(hKey, HDMI_CEC_ENABLED);
+		DebugLog(L"SaveSettingsToRegistry: RegDeleteValueW result=%d", (result == ERROR_SUCCESS || result == ERROR_FILE_NOT_FOUND));
+    }
+
+    if (g_bigPictureSwitchCEC)
+    {
+        DWORD dwSize = sizeof(DWORD);
+		DWORD hdmiAddress = static_cast<DWORD>(g_bigPictureSwitchCEC->PortInfo().physAddr);
+
+        result = RegSetValueExW(hKey, SELECTED_HDMI_CEC_ADDRESS, 0, REG_DWORD,
+			reinterpret_cast<const BYTE*>(&hdmiAddress), dwSize);
+
+        DebugLog(L"SaveSettingsToRegistry: SELECTED_HDMI_CEC_ADDRESS result=%d, hdmiAddress=0x%08X", (result == ERROR_SUCCESS), hdmiAddress);
+    }
+    // Don't clear it out if the adapter isn't present.
+
     RegCloseKey(hKey);
 
     SaveStartupEnabled();
@@ -996,6 +1203,34 @@ BOOL LoadSettingsFromRegistry()
 
 
 	g_bStartupEnabled = IsStartupEnabled();
+
+    dwSize = sizeof(DWORD);
+    DWORD dwHdmiAddress = 0;
+	result = RegQueryValueExW(hKey, SELECTED_HDMI_CEC_ADDRESS, 0, &dwType, reinterpret_cast<BYTE*>(&dwHdmiAddress), &dwSize);
+
+    if (result == ERROR_SUCCESS && dwType == REG_DWORD && dwSize == sizeof(DWORD))
+    {
+        g_savedHDMICECaddress = static_cast<uint16_t>(dwHdmiAddress);
+        DebugLog(L"LoadSettingsFromRegistry: Loaded HDMI CEC address: %d", g_savedHDMICECaddress);
+    }
+    else
+    {
+        DebugLog(L"LoadSettingsFromRegistry: Failed to load HDMI CEC address, using default");
+ }
+
+    dwSize = sizeof(DWORD);
+	DWORD dwSwitchCEC = 0;
+	result = RegQueryValueExW(hKey, HDMI_CEC_ENABLED, 0, &dwType, reinterpret_cast<BYTE*>(&dwSwitchCEC), &dwSize);
+    if (result == ERROR_SUCCESS && dwType == REG_DWORD && dwSize == sizeof(DWORD))
+    {
+        g_switchCEC = (dwSwitchCEC != 0);
+        DebugLog(L"LoadSettingsFromRegistry: Loaded HDMI CEC enabled state: %d", g_switchCEC);
+    }
+    else
+    {
+        DebugLog(L"LoadSettingsFromRegistry: Failed to load HDMI CEC enabled state, using default");
+        g_switchCEC = false;
+	}
 
 
     RegCloseKey(hKey);

@@ -1,14 +1,16 @@
 #include "BigPictureSwitch.h"
 #include "BigPictureSwitchDisplay.h"
 
+#include <Ntddvdeo.h>
+#include <ioapiset.h>
+
 #include <unordered_set>
 #include <algorithm>
-
 
 std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
 {
     // 1. Get a device info set for the DISPLAY class
-    HDEVINFO devs = SetupDiGetClassDevs(
+    HDEVINFO devs = SetupDiGetClassDevsW(
         &GUID_DEVCLASS_DISPLAY,
         nullptr,
         nullptr,
@@ -27,27 +29,40 @@ std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
     {
         // 3. Match instance ID
         WCHAR bufId[512];
-        if (CM_Get_Device_IDW(devInfo.DevInst, bufId, _countof(bufId), 0) == CR_SUCCESS &&
+
+        DEVPROPTYPE propType;
+        DWORD size = sizeof(bufId);
+
+        HRESULT hr = SetupDiGetDevicePropertyW(
+            devs,                      
+            &devInfo,                  
+            &DEVPKEY_Device_InstanceId,
+            &propType,
+            reinterpret_cast<PBYTE>(bufId),
+            size,
+            &size,
+            0                         
+        );
+
+        if (SUCCEEDED(hr) && propType == DEVPROP_TYPE_STRING &&
             _wcsicmp(bufId, instanceId.c_str()) == 0)
         {
             // 4a. Try the new FriendlyName property
-            DEVPROPTYPE propType;
-            WCHAR bufName[512];
             DWORD cbSize = 0;
             BOOL status = SetupDiGetDevicePropertyW(
                 devs,
                 &devInfo,
                 &DEVPKEY_Device_FriendlyName,
                 &propType,
-                (BYTE*)bufName,
-                sizeof(bufName),
+                (BYTE*)bufId,
+                sizeof(bufId),
                 &cbSize,
                 0
             );
 
             if (status)
             {
-                friendly = bufName;
+                friendly = bufId;
             }
             else if (GetLastError() == ERROR_NOT_FOUND)
             {
@@ -58,14 +73,14 @@ std::wstring GetFriendlyNameFromInstanceId(const std::wstring& instanceId)
                     &devInfo,
                     &DEVPKEY_Device_DeviceDesc,
                     &propType,
-                    (BYTE*)bufName,
-                    sizeof(bufName),
+                    (BYTE*)bufId,
+                    sizeof(bufId),
                     &cbSize,
                     0
                 );
                 if (status)
                 {
-                    friendly = bufName;
+                    friendly = bufId;
                 }
             }
 
@@ -191,6 +206,13 @@ DisplayConfiguration GetCurrentDisplayConfiguration()
     return ret;
 
 }
+
+// NOTE: there is a better way of doing this where we cache this information and just look it up later
+// and there is a better way of enumerating display targets too using the SetupDiEnumDeviceInfo with MONITOR instances
+// but this is good enough for now.
+
+// NOTE: we could autodetect HDMI port for CEC by parsing the EDID ourselves, but maybe later.  It's better to make the user specify it for now
+// as it supports more configurations.
 
 std::optional<DisplayTargetEx> GetDisplayTargetExForPath(const DISPLAYCONFIG_PATH_INFO& path)
 {
