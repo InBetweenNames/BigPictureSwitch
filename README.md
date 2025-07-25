@@ -20,13 +20,19 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
     -   This is ideal for a TV that you don't use unless you're playing games on it.
     -   A best effort is made to do this.
     If something weird happens, just close the program and hit Win+P to get back your original configuration.
+-   If you have a device supported by [libcec](https://github.com/Pulse-Eight/libcec), you can use it to to power on and off your TV
+    as well as switch inputs automatically when Big Picture Mode is turned on or off.
+    - Support for this depends a lot on your TV.  My Samsung TV from 2008 seems to work fine for switching inputs and powering on, but
+      it seems that the standby mode isn't implemented.
+
 
 # Planned features
 
--   [libcec](https://github.com/Pulse-Eight/libcec) integration to automatically power on/off the display and change its inputs
-    -   This one is waiting on me getting my USB HDMI-CEC dongle in the mail
 -   Ability to set the window title/class for listening for Big Picture Mode (e.g. to use with Kodi or something like that)
-
+-   Ability to select from multiple libcec-compatible devices or adapters (currently the first one found is used)
+    -  Ideally, talking to a libcec-compatible device remotely (like a Raspberry Pi) to integrate with your existing home
+       automation setup would be great too.
+ 
 # Non planned features (WONTFIX)
 - Support for other OSes, such as Linux or macOS
     -   I would also have to rewrite everything in some kind of portable GUI framework which sounds like a lot of bloat
@@ -37,12 +43,14 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
 
 -   This is native code in C++, not C#, which is a bit easier to work with because audio switching in Windows needs to be done through COM anyway
     -   And there is no native C# library to do this other than AudioSwitcher, which depends on .NET Framework, etc...
--   Zero dependencies other than Windows 7 and above (in principle?  Haven't actually tested it.  I use Windows 11 so YMMV).
+-   One executable that does it all
+  -  libcec is statically linked in
+  -  Windows dependencies are not (C, C++ runtime, etc)
 -   Event based rather than polling based
     -   Receives events for window creation and destruction and then just matches that against Steam to detect Big Picture mode
     -   0% CPU usage when there is nothing to do
 -   Efficiency mode support (not that it really matters, as the application is idle except when it receives events, but why not?)
--   Manages display configurations _and_ audio configurations
+-   Manages display configurations _and_ audio configurations, as well as the TV power state and input switching
 
 
 # Installation
@@ -75,3 +83,6 @@ So... that's how I got to developing Big Picture Switch.
   -  Sometimes SetDisplayConfig can fail with `ERROR_GEN_FAILURE` -- not much I can do about that.  Hardware can be finicky.
 -   If the application exited improperly, it seems Windows is pretty robust at fixing up your displays, just hit Win+P to get back to your original configuration.
   -  Hopefully this doesn't happen too often.
+-  libcec spins up a ton of threads and I don't care much to find out why.  They seem to spin eating up a bit of CPU.  To mitigate this, BigPictureSwitch
+   only connects to your libcec-compatible device briefly to send commands to your TV, then immediately disconnects.  This results in a longer "switching" time than if it were always connected,
+   but seems to work well enough.  Open a ticket if this is a problem for you.

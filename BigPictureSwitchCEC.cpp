@@ -174,7 +174,7 @@ void BigPictureSwitchCEC::WakeAndSwitch()
 {
     if (OpenAdapter(m_adapter)) {
         // Wake the TV
-        m_parser->SendKeypress(CEC::CECDEVICE_TV, CEC::CEC_USER_CONTROL_CODE_POWER_ON_FUNCTION, true);
+        m_parser->PowerOnDevices();
 
         // Switch to our input
         m_parser->SetActiveSource();
@@ -198,8 +198,6 @@ void BigPictureSwitchCEC::StandbyAndSwitch()
         if (activeSource == CEC::CECDEVICE_UNKNOWN || activeSource == CEC::CECDEVICE_TV) {
             // If there is no active source, turn the TV off.
 			m_parser->StandbyDevices(CEC::CECDEVICE_TV);
-            m_parser->SendKeypress(CEC::CECDEVICE_TV, CEC::CEC_USER_CONTROL_CODE_POWER_OFF_FUNCTION, true);
-            m_parser->SendKeyRelease(CEC::CECDEVICE_TV);
         }
 
         // close the adapter after sending the command
@@ -212,7 +210,8 @@ void BigPictureSwitchCEC::TurnOff()
     if (OpenAdapter(m_adapter)) {
         DebugLog(L"BigPictureSwitchCEC::TurnOff: Sending power off");
 
-        m_parser->SendKeypress(CEC::CECDEVICE_TV, CEC::CEC_USER_CONTROL_CODE_POWER_TOGGLE_FUNCTION, true);
+        m_parser->SendKeypress(CEC::CECDEVICE_TV, CEC::CEC_USER_CONTROL_CODE_POWER_OFF_FUNCTION, true);
+        m_parser->StandbyDevices(CEC::CECDEVICE_TV);
 
         m_parser->Close();
     }

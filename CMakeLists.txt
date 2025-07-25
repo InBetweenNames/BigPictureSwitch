@@ -10,7 +10,6 @@ if(NOT WIN32)
     message(FATAL_ERROR "This project only supports Windows")
 endif()
 
-
 include(ExternalProject)
 ExternalProject_Add(platform
   SOURCE_DIR    ${CMAKE_SOURCE_DIR}/platform
@@ -132,12 +131,12 @@ if(MSVC)
     # Debug/Release specific options
     target_compile_options(BigPictureSwitch PRIVATE
         $<$<CONFIG:Debug>:/Od /Zi /RTC1>
-        $<$<CONFIG:Release>:/O2 /GL>
+        $<$<CONFIG:Release>:/O2 /GL /Gy>
     )
     
     # Debug/Release specific link options
     target_link_options(BigPictureSwitch PRIVATE
-        $<$<CONFIG:Release>:/LTCG>
+        $<$<CONFIG:Release>:/LTCG /OPT:REF /OPT:ICF>
     )
 
     cmake_policy(SET CMP0141 NEW)
