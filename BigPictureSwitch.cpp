@@ -5,6 +5,8 @@
 #include "framework.h"
 #include "BigPictureSwitch.h"
 
+#include <GameInput.h>
+
 
 #include <unordered_set>
 #include <optional>
@@ -24,6 +26,7 @@
 #define MAX_LOADSTRING 100
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_USER_DIALOG_CLOSED  (WM_USER + 2)
+#define WM_USER_GUIDE_PRESSED  (WM_USER + 3)
 
 // Registry target for Windows startup
 #define STARTUP_REGISTRY_PATH L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
@@ -75,7 +78,7 @@ BOOL                InitializeWindowEventHook();
 void                CleanupWindowEventHook();
 BOOL                SaveSettingsToRegistry();
 BOOL                LoadSettingsFromRegistry();
-
+void 			  EnterBigPictureMode();    
 
 
 
@@ -95,8 +98,42 @@ bool g_bExcludeSelectedDisplayFromDesktop = false; // Flag to indicate if the se
 
 std::optional<uint16_t> g_savedHDMICECaddress; // Selected HDMI CEC address
 std::optional<BigPictureSwitchCEC> g_bigPictureSwitchCEC; // CEC instance
+std::optional<HWND> g_steamBigPictureModeHwnd;
 bool g_switchCEC = false;
 
+// Callback signature
+void CALLBACK OnSystemButton(
+    GameInputCallbackToken   token,
+    void* context,
+    IGameInputDevice* device,
+    uint64_t                 timestamp,
+    GameInputSystemButtons   currentButtons,
+    GameInputSystemButtons   previousButtons
+)
+{
+    bool down = (currentButtons & GameInputSystemButtonGuide) != 0;
+    bool wasDown = (previousButtons & GameInputSystemButtonGuide) != 0;
+    if (down && !wasDown) {
+		// Guide just pressed -- post a message to the main window to handle it
+		// This callback is called from the GameInput thread, so we need to post a message to the main window
+		// libcec is not thread-safe, so we cannot call it directly here
+
+        DebugLog(L"OnSystemButton: Guide button pressed");
+        PostMessageW(g_hWnd, WM_USER_GUIDE_PRESSED, 0, 0); // Notify the main window (thread safe)
+    }
+    else if (down && wasDown) {
+        // Guide is still down
+        DebugLog(L"OnSystemButton: Guide button held down");
+    }
+    else if (!down && !wasDown) {
+        // Guide just released, but wasn't pressed before
+		DebugLog(L"OnSystemButton: Guide button released without being pressed");
+            
+    }
+    else if (!down && wasDown) {
+        // Guide just released
+    }
+}
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
@@ -198,6 +235,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // Load common controls
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_INTERNET_CLASSES };
     InitCommonControlsEx(&icc);
+
+    // Register events for guide button presses
+    IGameInput* gameInput = nullptr;
+    hr = GameInputCreate(&gameInput);
+    if (FAILED(hr))
+    {
+        PANIC(L"wWinMain: GameInputCreate failed: 0x%08X", hr);
+	}
+    else {
+        GameInputCallbackToken token{};
+        hr = gameInput->RegisterSystemButtonCallback(
+            /*device=*/    nullptr,                                        // all controllers
+            /*buttonFilter=*/ GameInputSystemButtonGuide,                // only Guide
+            /*context=*/   nullptr,                                       // optional user context
+            /*callback=*/  OnSystemButton,                                // your handler
+            &token                                                      // out token
+        );
+    }
 
     MSG msg;
 
@@ -516,6 +571,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		// Save the HDMI CEC address
         SaveSettingsToRegistry();
         break;
+    case WM_USER_GUIDE_PRESSED:
+        // Handle the guide button press
+        DebugLog(L"WndProc: Guide button pressed");
+        if (g_bSteamBigPictureModeRunning)
+        {
+			DebugLog(L"WndProc: Steam Big Picture Mode is running, performing input switches again");
+            // If Steam Big Picture Mode is running, enter Big Picture Mode
+            EnterBigPictureMode();
+        }
+		break;
     default:
         return DefWindowProcW(hWnd, message, wParam, lParam);
     }
@@ -726,98 +791,115 @@ BOOL SaveStartupEnabled()
 }
 
 
-void EnterBigPictureMode(HWND steamBigPictureModeHwnd)
+void EnterBigPictureMode()
 {
-    if (!g_bSteamBigPictureModeRunning)
+    if (g_bSteamBigPictureModeRunning)
     {
+        DebugLog(L"Steam Big Picture Mode already activated -- switching devices again, but not saving settings");
+    }
+    else {
         DebugLog(L"Entering Steam Big Picture Mode");
+    }
 
-        if (g_switchCEC)
+    if (g_switchCEC)
+    {
+        if (g_bigPictureSwitchCEC)
         {
-           if (g_bigPictureSwitchCEC)
+            // Switch to the selected CEC adapter
+            g_bigPictureSwitchCEC->WakeAndSwitch();
+            DebugLog(L"EnterBigPictureMode: Switched to CEC adapter: %s", g_bigPictureSwitchCEC->ToWString().c_str());
+        }
+        else
+        {
+            DebugLog(L"EnterBigPictureMode: CEC switching is disabled or not initialized");
+		}
+    }
+
+    if (g_selectedDisplayTarget)
+    {
+        // we must find a path that we can enable to get to our target display.
+        // It may not exist.  If it doesn't exist, do not switch to it.
+
+
+        DisplayConfiguration dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
+
+        if (auto pathToTarget = FindPathToDisplay(*g_selectedDisplayTarget, dc); pathToTarget) {
+
+            // save old display configuration (only if one has not already been saved)
+            if (!g_origDisplayConfig)
             {
-                // Switch to the selected CEC adapter
-                g_bigPictureSwitchCEC->WakeAndSwitch();
-                DebugLog(L"EnterBigPictureMode: Switched to CEC adapter: %s", g_bigPictureSwitchCEC->ToWString().c_str());
+                g_origDisplayConfig = GetCurrentDisplayConfiguration();
+            }
+
+            // use the selected display device as a topology with exactly one active display
+            auto res = SetDisplayConfigWrapper(1, &*pathToTarget,  // only paths
+                static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
+                //SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE
+                SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE);
+              
+
+            if (res != ERROR_SUCCESS)
+            {
+                // Make a message box to inform the user
+                std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
+                MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
             }
             else
             {
-                DebugLog(L"EnterBigPictureMode: CEC switching is disabled or not initialized");
-		   }
-        }
-
-        if (g_selectedDisplayTarget)
-        {
-            // we must find a path that we can enable to get to our target display.
-            // It may not exist.  If it doesn't exist, do not switch to it.
+                DebugLog(L"EnterBigPictureMode: Successfully switched to external display");
+            }
 
 
-            DisplayConfiguration dc = QueryDisplayConfiguration(QDC_ALL_PATHS | QDC_VIRTUAL_REFRESH_RATE_AWARE, nullptr);
-
-            if (auto pathToTarget = FindPathToDisplay(*g_selectedDisplayTarget, dc); pathToTarget) {
-
-                // save old display configuration
-                g_origDisplayConfig = GetCurrentDisplayConfiguration();
-
-                // use the selected display device as a topology with exactly one active display
-                auto res = SetDisplayConfigWrapper(1, &*pathToTarget,  // only paths
-                    static_cast<UINT32>(dc.modes.size()), dc.modes.data(),
-                    //SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_VIRTUAL_REFRESH_RATE_AWARE
-                    SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_VIRTUAL_REFRESH_RATE_AWARE | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE);
-              
-
-                if (res != ERROR_SUCCESS)
-                {
-                    // Make a message box to inform the user
-                    std::wstring errorMessage = std::format(L"Failed to switch display configuration: SetDisplayConfig returned {}", res);
-                    MessageBoxW(g_hWnd, errorMessage.c_str(), L"Error", MB_OK | MB_ICONERROR);
-                }
-                else
-                {
-                    DebugLog(L"EnterBigPictureMode: Successfully switched to external display");
-                }
-
-
-                // testing
+            if (g_steamBigPictureModeHwnd)
+            {
 
                 // Get the current screen dimensions
                 int screenWidth = GetSystemMetrics(SM_CXSCREEN);
                 int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
                 // Force window to resize and reposition
-                SetWindowPos(steamBigPictureModeHwnd, HWND_TOP, 0, 0, screenWidth, screenHeight,
+                SetWindowPos(g_steamBigPictureModeHwnd.value(), HWND_TOP, 0, 0, screenWidth, screenHeight,
                     SWP_NOZORDER | SWP_SHOWWINDOW);
 
                 DebugLog(L"Resized window to: %dx%d", screenWidth, screenHeight);
             }
-            else
-            {
-                DebugLog(L"EnterBigPictureMode: Could not find path to selected display target");
-			}
         }
         else
         {
-			DebugLog(L"EnterBigPictureMode: Display switching is disabled");
-        }
+            DebugLog(L"EnterBigPictureMode: Could not find path to selected display target");
+		}
+    }
+    else
+    {
+		DebugLog(L"EnterBigPictureMode: Display switching is disabled");
+    }
         
 
-        // Switch to the selected audio device if one is configured (do this after the display configuration change)
-        if (g_selectedAudioDeviceId)
+    // Switch to the selected audio device if one is configured (do this after the display configuration change)
+    if (g_selectedAudioDeviceId)
+    {
+        std::wstring mainDeviceName;
+
+        if (g_origAudioDeviceId.empty())
         {
-            std::wstring mainDeviceName;
             if (SUCCEEDED(GetCurrentAudioDevice(g_origAudioDeviceId, mainDeviceName)))
             {
                 SetDefaultAudioDevice(g_selectedAudioDeviceId->c_str());
-                DebugLog(L"EnterBigPictureMode: Switched audio from '%s' to '%s'",
-                    g_origAudioDeviceId.c_str(), g_selectedAudioDeviceId->c_str());
+                DebugLog(L"EnterBigPictureMode: Saved original audio device '%s' : '%s'",
+                    g_origAudioDeviceId.c_str(), mainDeviceName.c_str());
             }
         }
-        else {
-            DebugLog(L"EnterBigPictureMode: Audio switching is disabled");
-        }
-        
-        g_bSteamBigPictureModeRunning = true;
+
+        SetDefaultAudioDevice(g_selectedAudioDeviceId->c_str());
+        DebugLog(L"EnterBigPictureMode: Switched audio from '%s' to '%s'",
+            g_origAudioDeviceId.c_str(), g_selectedAudioDeviceId->c_str());
     }
+    else {
+        DebugLog(L"EnterBigPictureMode: Audio switching is disabled");
+    }
+        
+    g_bSteamBigPictureModeRunning = true;
+    
 }
 
 void SetDesktopDisplayConfiguration(DisplayConfiguration& dc)
@@ -885,6 +967,7 @@ void ExitBigPictureMode()
         
 
         g_bSteamBigPictureModeRunning = false;
+		g_steamBigPictureModeHwnd.reset();
     }
 
 }
@@ -915,9 +998,13 @@ void CALLBACK WinEventProc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, 
     // Check if this is Steam Big Picture Mode
     if (WindowMatches(szClassName, szWindowTitle))
     {
-        if (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW)
+        if (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW || event == EVENT_SYSTEM_FOREGROUND)
         {
-            EnterBigPictureMode(hwnd);
+            if (!g_steamBigPictureModeHwnd)
+            {
+                g_steamBigPictureModeHwnd = hwnd;
+            }
+            EnterBigPictureMode();
         }
         else if (event == EVENT_OBJECT_DESTROY || event == EVENT_OBJECT_HIDE)
         {
@@ -952,6 +1039,15 @@ BOOL InitializeWindowEventHook()
         0,                         // idProcess (0 = all processes)
         0,                         // idThread (0 = all threads)
         WINEVENT_OUTOFCONTEXT      // dwFlags
+    );
+
+    auto hForegroundHook = SetWinEventHook(
+        EVENT_SYSTEM_FOREGROUND,    // from…
+        EVENT_SYSTEM_FOREGROUND,    // …to this
+        NULL,                    // module (NULL = client)
+        WinEventProc,               // your callback
+        0, 0,                       // all processes / all threads
+        WINEVENT_OUTOFCONTEXT      // context flag
     );
 
     DebugLog(L"InitializeWindowEventHook: g_hWinEventHook=0x%p", g_hWinEventHook);

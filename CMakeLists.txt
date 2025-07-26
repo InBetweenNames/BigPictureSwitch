@@ -106,6 +106,7 @@ target_link_libraries(BigPictureSwitch PRIVATE
     setupapi
     cfgmgr32
     shlwapi
+    gameinput
     cec-static
     p8-platform
 )
