@@ -164,7 +164,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         }
 
-        BOOL setResult2 = SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+        BOOL setResult2 = SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS | PROCESS_MODE_BACKGROUND_BEGIN);
 
         if (!setResult2) {
             DWORD error = GetLastError();

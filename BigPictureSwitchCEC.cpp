@@ -108,8 +108,8 @@ BigPictureSwitchCEC::BigPictureSwitchCEC(std::optional<uint16_t> hdmiAddress)
     m_menuString = std::wstring(tmpStr.begin(), tmpStr.end());
     
 
-	// close the adapter -- otherwise we will burn cycles for no reason
-	m_parser->Close();
+	//// close the adapter -- otherwise we will burn cycles for no reason
+	//m_parser->Close();
 }
 
 std::vector<CEC::cec_adapter_descriptor> BigPictureSwitchCEC::EnumerateCECAdapters()
@@ -148,14 +148,15 @@ std::vector<CEC::cec_adapter_descriptor> BigPictureSwitchCEC::EnumerateCECAdapte
 // State change; bind this exact interface
 bool BigPictureSwitchCEC::OpenAdapter(const CEC::cec_adapter_descriptor& adapter)
 {
+    if (!m_opened) {
+        if (!m_parser->Open(adapter.strComName, 10000)) {
+            DebugLog(L"Failed to open CEC adapter: %S", adapter.strComName);
+            return false;
+        }
+        DebugLog(L"Opened CEC adapter: %S", adapter.strComName);
 
-    if (!m_parser->Open(adapter.strComName, 10000)) {
-        DebugLog(L"Failed to open CEC adapter: %S", adapter.strComName);
-        return false;
+        m_opened = true;
     }
-    DebugLog(L"Opened CEC adapter: %S", adapter.strComName);
-
-    m_opened = true;
 
     return true;
 }
@@ -180,7 +181,7 @@ void BigPictureSwitchCEC::WakeAndSwitch()
         m_parser->SetActiveSource();
 
         // close the adapter after sending the command
-        m_parser->Close();
+        //m_parser->Close();
     }
 }
 
@@ -201,7 +202,7 @@ void BigPictureSwitchCEC::StandbyAndSwitch()
         }
 
         // close the adapter after sending the command
-        m_parser->Close();
+        //m_parser->Close();
     }
 }
 
@@ -213,7 +214,7 @@ void BigPictureSwitchCEC::TurnOff()
         m_parser->SendKeypress(CEC::CECDEVICE_TV, CEC::CEC_USER_CONTROL_CODE_POWER_OFF_FUNCTION, true);
         m_parser->StandbyDevices(CEC::CECDEVICE_TV);
 
-        m_parser->Close();
+        //m_parser->Close();
     }
 }
 
