@@ -24,7 +24,8 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
     as well as switch inputs automatically when Big Picture Mode is turned on or off.
     - Support for this depends a lot on your TV.  My Samsung TV from 2008 seems to work fine for switching inputs and powering on, but
       it seems that the standby mode isn't implemented.
-
+-   If your controller has a "guide button" (e.g., Xbox controller), you can use it to toggle Big Picture Mode and BPS will
+    also listen for it to "re-do" the input switching in case you, e.g., fire up your Chromecast or something and want to go back.
 
 # Planned features
 
@@ -46,10 +47,12 @@ Based off the excellent work of [Big Picture Audio Switch](https://github.com/ci
 -   One executable that does it all
   -  libcec is statically linked in
   -  Windows dependencies are not (C, C++ runtime, etc)
--   Event based rather than polling based
+-   Event based rather than polling based (where possible)
     -   Receives events for window creation and destruction and then just matches that against Steam to detect Big Picture mode
-    -   0% CPU usage when there is nothing to do
--   Efficiency mode support (not that it really matters, as the application is idle except when it receives events, but why not?)
+    -   libcec polls, can't do much about that.
+        - However, if you don't have a libcec-compatible device, then libcec is not used at all and BPS is truly event-based
+-   Efficiency mode support
+    -   only libcec polls for things, and this mitigates (should completely eliminate) the effect that would have on your games
 -   Manages display configurations _and_ audio configurations, as well as the TV power state and input switching
 
 
@@ -83,6 +86,6 @@ So... that's how I got to developing Big Picture Switch.
   -  Sometimes SetDisplayConfig can fail with `ERROR_GEN_FAILURE` -- not much I can do about that.  Hardware can be finicky.
 -   If the application exited improperly, it seems Windows is pretty robust at fixing up your displays, just hit Win+P to get back to your original configuration.
   -  Hopefully this doesn't happen too often.
--  libcec spins up a ton of threads and I don't care much to find out why.  They seem to spin eating up a bit of CPU.  To mitigate this, BigPictureSwitch
-   only connects to your libcec-compatible device briefly to send commands to your TV, then immediately disconnects.  This results in a longer "switching" time than if it were always connected,
-   but seems to work well enough.  Open a ticket if this is a problem for you.
+-  If the Efficiency Mode mitgation isn't enough, file an issue and we can discuss.
+      - Could mitigate further if needed, but to really solve this, libcec needs to be ported to use async I/O and not spin up threads
+      - Fixing libcec is out of scope at this time
