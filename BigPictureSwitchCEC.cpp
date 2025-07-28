@@ -175,7 +175,7 @@ void BigPictureSwitchCEC::WakeAndSwitch()
 {
     if (OpenAdapter(m_adapter)) {
         // Wake the TV
-        m_parser->PowerOnDevices();
+        //m_parser->PowerOnDevices();
 
         // Switch to our input
         m_parser->SetActiveSource();
@@ -191,15 +191,15 @@ void BigPictureSwitchCEC::StandbyAndSwitch()
         // Set our source to inactive
         m_parser->SetInactiveView();
 
-        // If there is no active source on the TV, turn it off
-        auto activeSource = m_parser->GetActiveSource();
+  //      // If there is no active source on the TV, turn it off
+  //      auto activeSource = m_parser->GetActiveSource();
 
-		DebugLog(L"Active source: %d", activeSource);
+		//DebugLog(L"Active source: %d", activeSource);
 
-        if (activeSource == CEC::CECDEVICE_UNKNOWN || activeSource == CEC::CECDEVICE_TV) {
-            // If there is no active source, turn the TV off.
-			m_parser->StandbyDevices(CEC::CECDEVICE_TV);
-        }
+  //      if (activeSource == CEC::CECDEVICE_UNKNOWN || activeSource == CEC::CECDEVICE_TV) {
+  //          // If there is no active source, turn the TV off.
+		//	m_parser->StandbyDevices(CEC::CECDEVICE_TV);
+  //      }
 
         // close the adapter after sending the command
         //m_parser->Close();
