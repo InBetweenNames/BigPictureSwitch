@@ -125,8 +125,8 @@ struct std::formatter<DisplayTargetEx, wchar_t> {
 inline bool operator==(const DisplayTargetEx& lhs, const DisplayTargetEx& rhs)
 {
     // We don't care about comparing status.  We do care about expected names as this is a sign the configuration has changed.
-    return lhs.id == rhs.id
-        && rhs.monitorDevicePath == lhs.monitorDevicePath
+    // We also don't care about comparing the raw adapter ID as this can change on e.g. driver updates.
+    return rhs.monitorDevicePath == lhs.monitorDevicePath
         && lhs.adapterDevicePath == rhs.adapterDevicePath;
 }
 
